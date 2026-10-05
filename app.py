@@ -1207,7 +1207,7 @@ try:
                     total_gasto += float(
                         venda.get("valor_total", 0) or 0
                         )
-                    except:
+                except:
                         pass
     
                 ticket_medio = (
