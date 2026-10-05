@@ -1092,7 +1092,29 @@ def dashboard():
         </p>
         """, 500
 
+@app.route("/teste-gestaoclick")
+def teste_gestaoclick():
+    try:
+        resposta = requests.get(
+            f"{GESTAOCLICK_BASE_URL}/clientes",
+            headers={
+                "access-token": ACCESS_TOKEN,
+                "secret-access-token": SECRET_ACCESS_TOKEN,
+                "accept": "application/json"
+            },
+            timeout=30
+        )
 
+        return jsonify({
+            "status_http": resposta.status_code,
+            "resposta": resposta.json()
+        })
+
+    except Exception as erro:
+        return jsonify({
+            "conexao": "erro",
+            "detalhes": str(erro)
+        }), 500
 @app.route("/health")
 def health():
 
