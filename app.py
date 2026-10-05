@@ -37,5 +37,5 @@ except Exception as erro:
         "conexao": "erro",
         "detalhes": str(erro)
     }), 500
-if __name == "__main_": app:run(host="0.0.0.)
+
 
