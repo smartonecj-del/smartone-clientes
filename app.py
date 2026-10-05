@@ -1228,13 +1228,13 @@ try:
                 "ticket_medio": round(ticket_medio, 2)
             })
 
-        return jsonify({
-            "code": 200,
-            "quantidade_clientes": len(resultado),
-            "clientes": resultado
-        })
+            return jsonify({
+                "code": 200,
+                "quantidade_clientes": len(resultado),
+                "clientes": resultado
+            })
 
-except exception as erro:
+except Exception as erro:
         return jsonify({
             "code": 500,
             "erro": str(erro)
