@@ -1161,80 +1161,80 @@ def teste_clientes_vendas():
 "Accept": "application/json"
      }
 
-try:
-        # Buscar clientes
-        resposta_clientes = requests.get(
-            f"{GESTAOCLICK_BASE_URL}/clientes",
-            headers=headers,
-            timeout=30
-        )
-
-        clientes_json = resposta_clientes.json()
-        clientes = clientes_json.get("data", [])
-
-        # Buscar vendas
-        resposta_vendas = requests.get(
-            f"{GESTAOCLICK_BASE_URL}/vendas",
-            headers=headers,
-            timeout=30
-        )
-
-        vendas_json = resposta_vendas.json()
-        vendas = vendas_json.get("data", [])
+    try:
+            # Buscar clientes
+            resposta_clientes = requests.get(
+                f"{GESTAOCLICK_BASE_URL}/clientes",
+                headers=headers,
+                timeout=30
+            )
     
-        # Organizar vendas por cliente
-        historico = defaultdict(list)
-
-        for venda in vendas:
-                cliente_id = str(venda.get("cliente_id", ""))
+            clientes_json = resposta_clientes.json()
+            clientes = clientes_json.get("data", [])
     
-                if cliente_id:
-                    historico[cliente_id].append(venda)
+            # Buscar vendas
+            resposta_vendas = requests.get(
+                f"{GESTAOCLICK_BASE_URL}/vendas",
+                headers=headers,
+                timeout=30
+            )
     
-        resultado = []
-
-        for cliente in clientes:
-
-            cliente_id = str(cliente.get("id", ""))
-            vendas_cliente = historico.get(cliente_id, [])
-
-            quantidade_compras = len(vendas_cliente)
-
-            total_gasto = 0
-
-            for venda in vendas_cliente:
-                try:
-                    total_gasto += float(
-                        venda.get("valor_total", 0) or 0
-                        )
-                except:
-                        pass
+            vendas_json = resposta_vendas.json()
+            vendas = vendas_json.get("data", [])
+        
+            # Organizar vendas por cliente
+            historico = defaultdict(list)
     
-                ticket_medio = (
-                    total_gasto / quantidade_compras
-                    if quantidade_compras > 0
-                    else 0
-                )
+            for venda in vendas:
+                    cliente_id = str(venda.get("cliente_id", ""))
+        
+                    if cliente_id:
+                        historico[cliente_id].append(venda)
+        
+            resultado = []
     
-                resultado.append({
-                    "id": cliente_id,
-                    "nome": cliente.get("nome", ""),
-                    "celular": cliente.get("celular", ""),
-                    "data_nascimento": cliente.get(
-                        "data_nascimento", ""
-                    ),
-                    "quantidade_compras": quantidade_compras,
-                    "total_gasto": round(total_gasto, 2),
-                    "ticket_medio": round(ticket_medio, 2)
-                })
+            for cliente in clientes:
     
-                return jsonify({
-                    "code": 200,
-                    "quantidade_clientes": len(resultado),
-                    "clientes": resultado
-                })
+                cliente_id = str(cliente.get("id", ""))
+                vendas_cliente = historico.get(cliente_id, [])
+    
+                quantidade_compras = len(vendas_cliente)
+    
+                total_gasto = 0
+    
+                for venda in vendas_cliente:
+                    try:
+                        total_gasto += float(
+                            venda.get("valor_total", 0) or 0
+                            )
+                    except:
+                            pass
+        
+                    ticket_medio = (
+                        total_gasto / quantidade_compras
+                        if quantidade_compras > 0
+                        else 0
+                    )
+        
+                    resultado.append({
+                        "id": cliente_id,
+                        "nome": cliente.get("nome", ""),
+                        "celular": cliente.get("celular", ""),
+                        "data_nascimento": cliente.get(
+                            "data_nascimento", ""
+                        ),
+                        "quantidade_compras": quantidade_compras,
+                        "total_gasto": round(total_gasto, 2),
+                        "ticket_medio": round(ticket_medio, 2)
+                    })
+        
+                        return jsonify({
+                            "code": 200,
+                            "quantidade_clientes": len(resultado),
+                            "clientes": resultado
+                        })
 
-except Exception as erro:
+    except Exception as erro:
         return jsonify({
             "code": 500,
             "erro": str(erro)
