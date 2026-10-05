@@ -1127,7 +1127,32 @@ def health():
 # =========================================================
 # INICIAR
 # =========================================================
+@app.route("/teste-vendas")
+def teste_vendas():
+    url = f"{GESTAOCLICK_BASE_URL}/vendas"
 
+    headers = {
+        "access-token": ACCESS_TOKEN,
+        "secret-access-token": SECRET_ACCESS_TOKEN,
+        "Accept": "application/json"
+    }
+
+    try:
+        resposta = requests.get(
+            url,
+            headers=headers,
+            timeout=30
+        )
+
+        return jsonify({
+            "status_http": resposta.status_code,
+            "resposta": resposta.json()
+        })
+
+    except Exception as erro:
+        return jsonify({
+            "erro": str(erro)
+        }), 500
 if __name__ == "__main__":
 
     port = int(
