@@ -1153,15 +1153,15 @@ def teste_vendas():
         return jsonify({
             "erro": str(erro)
         }), 500
-        @app.route("/teste-clientes-vendas")
-        def teste_clientes_vendas():
-            headers = {
-        "access-token": ACCESS_TOKEN,
-        "secret-access-token": SECRET_ACCESS_TOKEN,
-        "Accept": "application/json"
-    }
+@app.route("/teste-clientes-vendas")
+def teste_clientes_vendas():
+     headers = {
+"access-token": ACCESS_TOKEN,
+"secret-access-token": SECRET_ACCESS_TOKEN,
+"Accept": "application/json"
+     }
 
-    try:
+try:
         # Buscar clientes
         resposta_clientes = requests.get(
             f"{GESTAOCLICK_BASE_URL}/clientes",
