@@ -1155,8 +1155,7 @@ def teste_vendas():
         }), 500
         @app.route("/teste-clientes-vendas")
         def teste_clientes_vendas():
-
-    headers = {
+            headers = {
         "access-token": ACCESS_TOKEN,
         "secret-access-token": SECRET_ACCESS_TOKEN,
         "Accept": "application/json"
