@@ -37,5 +37,5 @@ except Exception as erro:
         "conexao": "erro",
         "detalhes": str(erro)
     }), 500
-if __name__ == "__main__": app.run(host="0.0.0.0", port=10000)
+if __name == "__main_": app:run(host="0.0.0.
 
