@@ -1239,6 +1239,12 @@ def teste_vendas():
             "code": 500,
             "erro": str(erro)
         }), 500
+@app.route("/rotas")
+def rotas():
+    return jsonify([
+        str(regra)
+        for regra in app.url_map.iter_rules()
+])
 if __name__ == "__main__":
 
     port = int(
