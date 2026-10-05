@@ -1234,7 +1234,7 @@ try:
             "clientes": resultado
         })
 
-    except Exception as erro:
+except exception as erro:
         return jsonify({
             "code": 500,
             "erro": str(erro)
