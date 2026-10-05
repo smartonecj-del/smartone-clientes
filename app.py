@@ -1154,7 +1154,7 @@ def teste_vendas():
             "erro": str(erro)
         }), 500
         @app.route("/teste-clientes-vendas")
-def teste_clientes_vendas():
+        def teste_clientes_vendas():
 
     headers = {
         "access-token": ACCESS_TOKEN,
