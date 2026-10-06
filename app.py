@@ -1266,37 +1266,37 @@ def teste_clientes_vendas():
             
                     ultima_compra = max(datas_compras) if datas_compras else ""
                     if data_ultima:
-    dias_sem_comprar = (data.today() - data_ultima).days
+                        dias_sem_comprar = (data.today() - data_ultima).days
 
-    if dias_sem_comprar <= DIAS_EM_RISCO:
-        status_cliente = "Ativo"
-    elif dias_sem_comprar <= DIAS_INATIVO:
-        status_cliente = "Em risco"
-    else:
-        status_cliente = "Inativo"
-else:
-    dias_sem_comprar = None
-    status_cliente = "Sem histórico"
-ticket_medio = (
-    total_gasto / quantidade_compras
-    if quantidade_compras > 0
-    else 0
-)
+                    if dias_sem_comprar <= DIAS_EM_RISCO:
+                        status_cliente = "Ativo"
+                    elif dias_sem_comprar <= DIAS_INATIVO:
+                        status_cliente = "Em risco"
+                    else:
+                        status_cliente = "Inativo"
+                    else:
+                        dias_sem_comprar = None
+                        status_cliente = "Sem histórico"
+                    ticket_medio = (
+                    total_gasto / quantidade_compras
+                    if quantidade_compras > 0
+                    else 0
+                )
         
-resultado.append({
-    "id": cliente_id,
-    "nome": cliente.get("nome", ""),
-    "celular": cliente.get("celular", ""),
-    "data_nascimento": cliente.get(
-        "data_nascimento", ""
-    ),
-        "quantidade_compras": quantidade_compras,
-        "total_gasto": round(total_gasto, 2),
-        "ticket_medio": round(ticket_medio, 2),
-        "ultima_compra": ultima_compra,
-        "dias_sem_comprar": dias_sem_coomprar,
-        "status": status_cliente
-    })
+                    resultado.append({
+                        "id": cliente_id,
+                        "nome": cliente.get("nome", ""),
+                        "celular": cliente.get("celular", ""),
+                        "data_nascimento": cliente.get(
+                            "data_nascimento", ""
+                        ),
+                            "quantidade_compras": quantidade_compras,
+                            "total_gasto": round(total_gasto, 2),
+                            "ticket_medio": round(ticket_medio, 2),
+                            "ultima_compra": ultima_compra,
+                            "dias_sem_comprar": dias_sem_coomprar,
+                            "status": status_cliente
+                        })
         
 return jsonify({
     "code": 200,
