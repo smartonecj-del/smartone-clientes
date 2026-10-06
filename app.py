@@ -1264,24 +1264,26 @@ def teste_clientes_vendas():
                         if data_venda:
                             datas_compras.append(data_venda)
             
-                    ultima_compra = max(datas_compras) if datas_compras else ""
-                    if data_ultima:
-                        dias_sem_comprar = (data.today() - data_ultima).days
+                   ultima_compra = max(datas_compras) if datas_compras else ""
 
-                        if dias_sem_comprar <= DIAS_EM_RISCO:
-                            status_cliente = "Ativo"
-                        elif dias_sem_comprar <= DIAS_INATIVO:
-                            status_cliente = "Em risco"
-                        else:
-                            status_cliente = "Inativo"
-                     else:
-                        dias_sem_comprar = None
-                        status_cliente = "Sem histórico"
-                    ticket_medio = (
-                    total_gasto / quantidade_compras
-                    if quantidade_compras > 0
-                    else 0
-                )
+       if data_ultima:
+           dias_sem_comprar = (data.today() - data_ultima).days
+
+        if dias_sem_comprar <= DIAS_EM_RISCO:
+            status_cliente = "Ativo"
+        elif dias_sem_comprar <= DIAS_INATIVO:
+            status_cliente = "Em risco"
+        else:
+            status_cliente = "Inativo"
+else:
+    dias_sem_comprar = None
+    status_cliente = "Sem histórico"
+
+ticket_medio = (
+    total_gasto / quantidade_compras
+    if quantidade_compras > 0
+    else 0
+)
         
                     resultado.append({
                         "id": cliente_id,
