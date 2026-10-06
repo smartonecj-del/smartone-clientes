@@ -1257,7 +1257,14 @@ def teste_clientes_vendas():
                              )
                         except:
                             pass
-        
+                    datas_compras = []
+            
+                    for venda in vendas_cliente:
+                        data_venda = venda.get("data", "")
+                        if data_venda:
+                            datas_compras.append(data_venda)
+            
+                    ultima_compra = max(datas_compras) if datas_compras else ""
                     ticket_medio = (
                         total_gasto / quantidade_compras
                         if quantidade_compras > 0
