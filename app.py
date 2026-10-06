@@ -1157,7 +1157,7 @@ def teste_vendas():
 def teste_clientes_vendas():
     headers = {
         "access-token": ACCESS_TOKEN,
-        "secret-access-token": SECRET_ACCECSS_TOKEN,
+        "secret-access-token": SECRET_ACCESS_TOKEN,
         "accept": "application/json"
     } 
     try:
