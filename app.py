@@ -1253,7 +1253,7 @@ def teste_clientes_vendas():
                     for pagamento in venda.get("pagamentos",[]):
                         try:
                              total_gasto += float(
-                                 pagamento.get("valor", 0) or 0
+                                    pagamento.get("pagamento", {}) .get("valor", 0) or 0
                              )
                         except:
                             pass
