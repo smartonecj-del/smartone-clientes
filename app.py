@@ -1250,12 +1250,13 @@ def teste_clientes_vendas():
                 total_gasto = 0
     
                 for venda in vendas_cliente:
-                    try:
-                        total_gasto += float(
-                            venda.get("valor", 0) or 0
-                            )
-                    except:
-                            pass
+                    for pagamento in venda.get("pagamentos",[]):
+                        try:
+                             total_gasto += float(
+                                 pagamento.get("valor", 0) or 0
+                             )
+                         except:
+                             pass
         
                     ticket_medio = (
                         total_gasto / quantidade_compras
