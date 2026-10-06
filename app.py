@@ -1153,6 +1153,30 @@ def teste_vendas():
         return jsonify({
             "erro": str(erro)
         }), 500
+@app.route("/debug-clientes")
+def debug_clientes():
+    headers = {
+        "access-token": ACCESS_TOKEN,
+        "secret-access-token": SECRET_ACCESS_TOKEN,
+        "Accept": "application/json"
+    }
+
+    try:
+        resposta = requests.get(
+            f"{GESTAOCLICK_BASE_URL}/clientes",
+            headers=headers,
+            timeout=30
+        )
+
+        return jsonify({
+            "status_http": resposta.status_code,
+            "resposta_completa": resposta.json()
+        })
+
+    except Exception as erro:
+        return jsonify({
+            "erro": str(erro)
+        }), 500
 @app.route("/teste-clientes-vendas")
 def teste_clientes_vendas():
     headers = {
