@@ -1280,7 +1280,8 @@ def teste_clientes_vendas():
                         ),
                         "quantidade_compras": quantidade_compras,
                         "total_gasto": round(total_gasto, 2),
-                        "ticket_medio": round(ticket_medio, 2)
+                        "ticket_medio": round(ticket_medio, 2),
+                        "ultima_compra": ultima_compra
                     })
         
             return jsonify({
