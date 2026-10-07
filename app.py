@@ -1257,7 +1257,7 @@ def teste_clientes_vendas():
                              )
                         except:
                             pass
-        datas_compras = []
+datas_compras = []
 
 for venda in vendas_cliente:
     data_venda = venda.get("data", "")
