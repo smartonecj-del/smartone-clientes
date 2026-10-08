@@ -1259,8 +1259,8 @@ def teste_clientes_vendas():
                             pass
                 datas_compras = []
 
-                 for venda in vendas_cliente:
-                     data_venda = venda.get("data", "")
+                for venda in vendas_cliente:
+                    data_venda = venda.get("data", "")
 
                      if data_venda:
                          try:
