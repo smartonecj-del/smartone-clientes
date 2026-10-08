@@ -1252,14 +1252,14 @@ def teste_clientes_vendas():
                 for venda in vendas_cliente:
                     for pagamento in venda.get("pagamentos",[]):
                         try:
-                             total_gasto += float(
-                                    pagamento.get("pagamento", {}) .get("valor", 0) or 0
-                             )
+                            total_gasto += float(
+                                pagamento.get("pagamento", {}) .get("valor", 0) or 0
+                            )
                         except:
                             pass
-                 datas_compras = []
+                datas_compras = []
 
-                 for venda in vendas_cliente:
+                for venda in vendas_cliente:
                     data_venda = venda.get("data", "")
 
                     if data_venda:
