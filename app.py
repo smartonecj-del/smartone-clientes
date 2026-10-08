@@ -1262,43 +1262,43 @@ def teste_clientes_vendas():
                 for venda in vendas_cliente:
                     data_venda = venda.get("data", "")
 
-                     if data_venda:
-                         try:
-                             data_convertida = datetime.strptime(
-                                 data_venda[:10],
-                                 "%Y-%m-%d"
+                    if data_venda:
+                        try:
+                            data_convertida = datetime.strptime(
+                                data_venda[:10],
+                                "%Y-%m-%d"
                              ).date()
 
                              datas_compras.append(data_convertida)
 
-                         except:
-                             pass
+                        except:
+                            pass
 
-ultima_compra = max(datas_compras) if datas_compras else None
+                 ultima_compra = max(datas_compras) if datas_compras else None
 
-if ultima_compra:
-    dias_sem_comprar = (date.today() - ultima_compra).days
+                 if ultima_compra:
+                     dias_sem_comprar = (date.today() - ultima_compra).days
 
-    if dias_sem_comprar <= DIAS_EM_RISCO:
-        status_cliente = "Ativo"
+                     if dias_sem_comprar <= DIAS_EM_RISCO:
+                         status_cliente = "Ativo"
+                
+                     elif dias_sem_comprar <= DIAS_INATIVO:
+                         status_cliente = "Em risco"
 
-    elif dias_sem_comprar <= DIAS_INATIVO:
-        status_cliente = "Em risco"
+                     else:
+                         status_cliente = "Inativo"
 
-    else:
-        status_cliente = "Inativo"
-
-else:
-    dias_sem_comprar = None
-    status_cliente = "Sem histórico"
-
-ticket_medio = (
-    total_gasto / quantidade_compras
-    if quantidade_compras > 0
-    else 0
-)
-        
-                    resultado.append({
+                 else:
+                     dias_sem_comprar = None
+                     status_cliente = "Sem histórico"
+                
+                 ticket_medio = (
+                     total_gasto / quantidade_compras
+                     if quantidade_compras > 0
+                     else 0
+                 )
+                        
+                 resultado.append({
                         "id": cliente_id,
                         "nome": cliente.get("nome", ""),
                         "celular": cliente.get("celular", ""),
