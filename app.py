@@ -1257,9 +1257,9 @@ def teste_clientes_vendas():
                              )
                         except:
                             pass
-                datas_compras = []
+                 datas_compras = []
 
-                for venda in vendas_cliente:
+                 for venda in vendas_cliente:
                     data_venda = venda.get("data", "")
 
                     if data_venda:
@@ -1267,9 +1267,9 @@ def teste_clientes_vendas():
                             data_convertida = datetime.strptime(
                                 data_venda[:10],
                                 "%Y-%m-%d"
-                             ).date()
+                            ).date()
 
-                             datas_compras.append(data_convertida)
+                            datas_compras.append(data_convertida)
 
                         except:
                             pass
