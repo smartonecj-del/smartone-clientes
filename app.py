@@ -1257,22 +1257,22 @@ def teste_clientes_vendas():
                              )
                         except:
                             pass
-datas_compras = []
+                datas_compras = []
 
-for venda in vendas_cliente:
-    data_venda = venda.get("data", "")
+                 for venda in vendas_cliente:
+                     data_venda = venda.get("data", "")
 
-    if data_venda:
-        try:
-            data_convertida = datetime.strptime(
-                data_venda[:10],
-                "%Y-%m-%d"
-            ).date()
+                     if data_venda:
+                         try:
+                             data_convertida = datetime.strptime(
+                                 data_venda[:10],
+                                 "%Y-%m-%d"
+                             ).date()
 
-            datas_compras.append(data_convertida)
+                             datas_compras.append(data_convertida)
 
-        except:
-            pass
+                         except:
+                             pass
 
 ultima_compra = max(datas_compras) if datas_compras else None
 
