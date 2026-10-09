@@ -265,6 +265,49 @@ class IndicadoresTests(unittest.TestCase):
             self.assertEqual(modulo.dias_ate_aniversario("2000-02-29"), 1)
 
 
+class ConsumidorTests(unittest.TestCase):
+    def consolidar(self, clientes, vendas):
+        with patch.object(modulo, "listar_todos", return_value=clientes), \
+             patch.object(modulo, "listar_vendas", return_value=vendas):
+            return modulo.gerar_base_clientes()
+
+    def venda(self, **campos):
+        return dict({"id": "10", "cliente_id": "", "nome_cliente": "Ana Teste - 11987654321",
+                     "data": "2026-10-08", "valor_total": "23.90"}, **campos)
+
+    def test_avulso_agrupa_compras_e_preserva_telefone(self):
+        base = self.consolidar([], [self.venda(), self.venda(id="11", valor_total="10")])
+        self.assertEqual(len(base), 1)
+        self.assertEqual(base[0]["nome"], "Ana Teste")
+        self.assertEqual(base[0]["celular"], "11987654321")
+        self.assertEqual(base[0]["compras"], 2)
+        self.assertEqual(base[0]["total_gasto"], 33.90)
+
+    def test_vincula_cadastro_unico_com_nome_e_telefone(self):
+        base = self.consolidar([{"id": 1, "nome": "ANA TESTE", "celular": "+55 (11) 98765-4321"}],
+                              [self.venda(), self.venda(id="11", cliente_id="1")])
+        self.assertEqual(len(base), 1)
+        self.assertEqual(base[0]["id"], "1")
+        self.assertEqual(base[0]["compras"], 2)
+
+    def test_telefone_compartilhado_e_homonimos_nao_misturam(self):
+        base = self.consolidar([], [self.venda(), self.venda(id="11", nome_cliente="Bia Teste - 11987654321"),
+                                  self.venda(id="12", nome_cliente="Ana Teste - 21987654321")])
+        self.assertEqual(len(base), 3)
+        self.assertTrue(all(c["compras"] == 1 for c in base))
+
+    def test_cadastros_ambiguos_nao_recebem_venda(self):
+        base = self.consolidar([{"id": n, "nome": "Ana Teste", "celular": "11987654321"} for n in (1, 2)],
+                              [self.venda()])
+        self.assertEqual([c["compras"] for c in base], [0, 0, 1])
+
+    def test_sem_identificacao_ou_cancelada_nao_cria_perfil(self):
+        for campos in ({"nome_cliente": "Consumidor final"}, {"nome_cliente": "Ana - 123"},
+                       {"nome_situacao": "Cancelada"}):
+            with self.subTest(campos=campos):
+                self.assertEqual(self.consolidar([], [self.venda(**campos)]), [])
+
+
 class RotasTests(unittest.TestCase):
     def setUp(self):
         self.client = modulo.app.test_client()
@@ -295,6 +338,20 @@ class RotasTests(unittest.TestCase):
 
     def test_health_sem_credenciais(self):
         self.assertEqual(self.client.get("/health").json["status"], "ok")
+
+    def test_head_nao_consulta_erp(self):
+        with patch.object(modulo, "gerar_base_clientes") as gerar:
+            self.assertEqual(self.client.head("/").status_code, 200)
+            gerar.assert_not_called()
+
+    def test_diagnostico_id_interno(self):
+        with patch.object(modulo, "consultar_api", return_value={"data": {}}) as consulta:
+            self.assertEqual(self.client.get("/teste-vendas?id=404287103").status_code, 200)
+            consulta.assert_called_once_with("vendas/404287103", {})
+        for query in ("id=abc", "id=1&tipo=vendas_balcao", "id=1&codigo=1759"):
+            with self.subTest(query=query), patch.object(modulo, "consultar_api") as consulta:
+                self.assertEqual(self.client.get("/teste-vendas?" + query).status_code, 400)
+                consulta.assert_not_called()
 
     def test_diagnosticos_usam_mesma_integracao(self):
         for rota, endpoint, campo in (
