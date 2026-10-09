@@ -1292,32 +1292,32 @@ def teste_clientes_vendas():
                     dias_sem_comprar = None
                     status_cliente = "Sem histórico"
                 
-                 ticket_medio = (
-                     total_gasto / quantidade_compras
-                     if quantidade_compras > 0
-                     else 0
-                 )
-                        
-                 resultado.append({
-                        "id": cliente_id,
-                        "nome": cliente.get("nome", ""),
-                        "celular": cliente.get("celular", ""),
-                        "data_nascimento": cliente.get(
-                            "data_nascimento", ""
-                        ),
-                            "quantidade_compras": quantidade_compras,
-                            "total_gasto": round(total_gasto, 2),
-                            "ticket_medio": round(ticket_medio, 2),
-                            "ultima_compra": ultima_compra,
-                            "dias_sem_comprar": dias_sem_comprar,
-                            "status": status_cliente
-                        })
+                ticket_medio = (
+                    total_gasto / quantidade_compras
+                    if quantidade_compras > 0
+                    else 0
+                )
+                    
+                resultado.append({
+                    "id": cliente_id,
+                    "nome": cliente.get("nome", ""),
+                    "celular": cliente.get("celular", ""),
+                    "data_nascimento": cliente.get(
+                    "data_nascimento", ""
+                    ),
+                    "quantidade_compras": quantidade_compras,
+                    "total_gasto": round(total_gasto, 2),
+                    "ticket_medio": round(ticket_medio, 2),
+                    "ultima_compra": ultima_compra,
+                    "dias_sem_comprar": dias_sem_comprar,
+                    "status": status_cliente
+                })
         
-return jsonify({
-    "code": 200,
-    "quantidade_clientes": len(resultado),
-    "clientes": resultado
-})
+            return jsonify({
+                "code": 200,
+                "quantidade_clientes": len(resultado),
+                "clientes": resultado
+            })
 
     except Exception as erro:
         return jsonify({
