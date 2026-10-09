@@ -1209,26 +1209,39 @@ def teste_clientes_vendas():
         "accept": "application/json"
     } 
     try:
-            # Buscar clientes
+           
+        # Buscar clientes
+        clientes = []
+        pagina = 1
+
+        while True:
             resposta_clientes = requests.get(
                 f"{GESTAOCLICK_BASE_URL}/clientes",
                 headers=headers,
+                params={"pagina": pagina},
                 timeout=30
             )
-    
+            resposta_clientes.raise_for_status()
+
             clientes_json = resposta_clientes.json()
-            clientes = clientes_json.get("data", [])
-    
-            # Buscar vendas
-            resposta_vendas = requests.get(
-                f"{GESTAOCLICK_BASE_URL}/vendas",
-                headers=headers,
-                timeout=30
-            )
-    
-            vendas_json = resposta_vendas.json()
-            vendas = vendas_json.get("data", [])
-        
+            lote = clientes_json.get("dados", [])
+
+            if not lote:
+                break
+
+            clientes.extend(lote)
+            pagina += 1
+
+        # Buscar vendas
+        resposta_vendas = requests.get(
+            f"{GESTAOCLICK_BASE_URL}/vendas",
+            headers=headers,
+            timeout=30
+        )
+        resposta_vendas.raise_for_status()
+        vendas_json = resposta_vendas.json()
+        vendas = vendas_json.get("dados", [])
+
             # Organizar vendas por cliente
             historico = defaultdict(list)
     
