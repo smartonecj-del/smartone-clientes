@@ -1,6 +1,9 @@
 
 import os
 import json
+import time
+from threading import Lock
+from email.utils import parsedate_to_datetime
 from hashlib import sha256
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import parse_qs, urlparse
@@ -26,6 +29,13 @@ GESTAOCLICK_BASE_URL = os.getenv(
 ACCESS_TOKEN = os.getenv("GESTAOCLICK_ACCESS_TOKEN")
 SECRET_ACCESS_TOKEN = os.getenv("GESTAOCLICK_SECRET_ACCESS_TOKEN")
 
+# A API limita cada empresa a 3 chamadas/s. Compartilhado pelas threads
+# deste processo; outros workers/serviços também consomem a cota da empresa.
+INTERVALO_API = 0.35
+MAX_TENTATIVAS_API = 3
+_lock_api = Lock()
+_ultima_requisicao_api = None
+
 # Regras iniciais da Smart One
 DIAS_EM_RISCO = 90
 DIAS_INATIVO = 180
@@ -48,6 +58,35 @@ def headers_gestaoclick():
     }
 
 
+def aguardar_intervalo_api():
+    """Chamado sob _lock_api antes de cada tentativa HTTP."""
+    global _ultima_requisicao_api
+    if _ultima_requisicao_api is not None:
+        espera = INTERVALO_API - (time.monotonic() - _ultima_requisicao_api)
+        if espera > 0:
+            time.sleep(espera)
+    _ultima_requisicao_api = time.monotonic()
+
+
+def espera_retentativa_api(resposta, tentativa, agora=None):
+    """Respeita Retry-After; esperas superiores a 60s encerram a consulta."""
+    cabecalho = resposta.headers.get("Retry-After")
+    if not cabecalho:
+        return 2 ** tentativa
+    try:
+        espera = float(cabecalho)
+    except (TypeError, ValueError):
+        try:
+            data = parsedate_to_datetime(cabecalho)
+            if data.tzinfo is None:
+                return 2 ** tentativa
+            agora = agora or datetime.now(ZoneInfo("UTC"))
+            espera = max(0, (data - agora).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return 2 ** tentativa
+    return espera if 0 <= espera <= 60 else None
+
+
 def consultar_api(endpoint, params=None):
     if not ACCESS_TOKEN or not SECRET_ACCESS_TOKEN:
         raise RuntimeError(
@@ -56,16 +95,30 @@ def consultar_api(endpoint, params=None):
 
     url = f"{GESTAOCLICK_BASE_URL}/{endpoint.lstrip('/')}"
 
-    response = requests.get(
-        url,
-        headers=headers_gestaoclick(),
-        params=params or {},
-        timeout=30
-    )
+    for tentativa in range(MAX_TENTATIVAS_API):
+        try:
+            # Serializa tentativas e evita rajadas entre threads do dashboard.
+            with _lock_api:
+                aguardar_intervalo_api()
+                response = requests.get(
+                    url, headers=headers_gestaoclick(),
+                    params=params or {}, timeout=30
+                )
+        except (requests.Timeout, requests.ConnectionError):
+            if tentativa + 1 == MAX_TENTATIVAS_API:
+                raise
+            time.sleep(2 ** tentativa)
+            continue
 
-    response.raise_for_status()
-
-    return response.json()
+        if response.status_code in (429, 500, 502, 503, 504):
+            if tentativa + 1 < MAX_TENTATIVAS_API:
+                espera = espera_retentativa_api(response, tentativa)
+                if espera is not None:
+                    response.close()
+                    time.sleep(espera)
+                    continue
+        response.raise_for_status()
+        return response.json()
 
 
 def listar_todos(endpoint, filtros=None):
@@ -350,11 +403,43 @@ def dias_ate_aniversario(data_nascimento):
 # MOTOR SMART ONE
 # =========================================================
 
+def listar_vendas():
+    """Consulta vendas comuns e de balcão em cada loja acessível à chave."""
+    lojas = listar_todos("lojas")
+    if not lojas:
+        raise RuntimeError("Nenhuma loja disponível na API do GestãoClick.")
+    resultado = []
+    ids_vistos = set()
+    lojas_vistas = set()
+    for loja in lojas:
+        loja_id = loja.get("id")
+        if loja_id in (None, ""):
+            raise RuntimeError("Loja sem ID no GestãoClick.")
+        loja_id = str(loja_id)
+        if loja_id in lojas_vistas:
+            continue
+        lojas_vistas.add(loja_id)
+        for filtros in (
+            {"loja_id": loja_id},
+            {"loja_id": loja_id, "tipo": "vendas_balcao"},
+        ):
+            for venda in listar_todos("vendas", filtros):
+                identificador = venda.get("id")
+                if identificador in (None, ""):
+                    raise RuntimeError("Venda sem ID; não é possível evitar duplicidade.")
+                identificador = str(identificador)
+                if identificador in ids_vistos:
+                    continue
+                ids_vistos.add(identificador)
+                resultado.append(venda)
+    return resultado
+
+
 def gerar_base_clientes():
 
     clientes = listar_todos("clientes")
 
-    vendas = listar_todos("vendas")
+    vendas = listar_vendas()
 
     historico = defaultdict(
         lambda: {
@@ -1306,3 +1391,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port
     )
+

@@ -1,11 +1,12 @@
 """Regressões offline: nenhum token real e nenhuma escrita no GestãoClick."""
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import Mock, patch
 
 import requests
 import app as modulo
+import validar_balcao as diagnostico
 
 
 HOJE = date(2026, 10, 8)
@@ -99,6 +100,11 @@ class PaginacaoTests(unittest.TestCase):
 
 
 class IntegracaoTests(unittest.TestCase):
+    def setUp(self):
+        intervalo = patch.object(modulo, "aguardar_intervalo_api")
+        intervalo.start()
+        self.addCleanup(intervalo.stop)
+
     def test_headers_timeout_filtros_e_get(self):
         resposta = Mock()
         resposta.json.return_value = {"data": []}
@@ -136,6 +142,96 @@ class IntegracaoTests(unittest.TestCase):
                 modulo.consultar_api("clientes")
 
 
+class RecuperacaoApiTests(unittest.TestCase):
+    def setUp(self):
+        for atributo, valor in (
+            ("ACCESS_TOKEN", "ficticio"),
+            ("SECRET_ACCESS_TOKEN", "ficticio"),
+        ):
+            p = patch.object(modulo, atributo, valor)
+            p.start()
+            self.addCleanup(p.stop)
+        p = patch.object(modulo, "aguardar_intervalo_api")
+        self.intervalo = p.start()
+        self.addCleanup(p.stop)
+        p = patch.object(modulo.time, "sleep")
+        self.esperar = p.start()
+        self.addCleanup(p.stop)
+
+    def resposta(self, status, retry_after=None):
+        resposta = requests.Response()
+        resposta.status_code = status
+        resposta._content = b'{"data": []}'
+        resposta._content_consumed = True
+        if retry_after is not None:
+            resposta.headers["Retry-After"] = retry_after
+        return resposta
+
+    def test_429_respeita_retry_after_e_recupera(self):
+        with patch.object(modulo.requests, "get", side_effect=[
+            self.resposta(429, "2"), self.resposta(200)
+        ]) as get:
+            self.assertEqual(modulo.consultar_api("vendas"), {"data": []})
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(self.intervalo.call_count, 2)
+        self.esperar.assert_called_once_with(2)
+
+    def test_falha_persistente_para_em_tres_tentativas(self):
+        with patch.object(modulo.requests, "get", side_effect=[
+            self.resposta(503), self.resposta(503), self.resposta(503)
+        ]) as get, self.assertRaises(requests.HTTPError):
+            modulo.consultar_api("vendas")
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual([c.args[0] for c in self.esperar.call_args_list], [1, 2])
+
+    def test_timeout_temporario_recupera(self):
+        with patch.object(modulo.requests, "get", side_effect=[
+            requests.Timeout("teste"), self.resposta(200)
+        ]) as get:
+            self.assertEqual(modulo.consultar_api("clientes"), {"data": []})
+        self.assertEqual(get.call_count, 2)
+
+    def test_timeout_persistente_e_propagado(self):
+        with patch.object(modulo.requests, "get", side_effect=requests.Timeout("teste")) as get, \
+             self.assertRaises(requests.Timeout):
+            modulo.consultar_api("clientes")
+        self.assertEqual(get.call_count, 3)
+
+    def test_401_nao_repete_credenciais_recusadas(self):
+        with patch.object(modulo.requests, "get", return_value=self.resposta(401)) as get, \
+             self.assertRaises(requests.HTTPError):
+            modulo.consultar_api("clientes")
+        get.assert_called_once()
+        self.esperar.assert_not_called()
+
+    def test_retry_after_longo_nao_e_encurtado(self):
+        with patch.object(modulo.requests, "get", return_value=self.resposta(429, "120")) as get, \
+             self.assertRaises(requests.HTTPError):
+            modulo.consultar_api("clientes")
+        get.assert_called_once()
+        self.esperar.assert_not_called()
+
+    def test_retry_after_data_http_e_valores_invalidos(self):
+        agora = datetime(2026, 10, 9, 12, tzinfo=timezone.utc)
+        self.assertEqual(modulo.espera_retentativa_api(
+            self.resposta(429, "Fri, 09 Oct 2026 12:00:05 GMT"), 0, agora
+        ), 5)
+        self.assertEqual(modulo.espera_retentativa_api(self.resposta(429, "inválido"), 1), 2)
+        for valor in ("NaN", "Infinity", "-1"):
+            self.assertIsNone(modulo.espera_retentativa_api(self.resposta(429, valor), 0))
+
+
+class IntervaloApiTests(unittest.TestCase):
+    def test_chamadas_rapidas_aguardam_e_chamadas_lentas_nao(self):
+        with patch.object(modulo, "_ultima_requisicao_api", 10), \
+             patch.object(modulo.time, "monotonic", side_effect=[10.1, 10.35, 11, 11]), \
+             patch.object(modulo.time, "sleep") as esperar:
+            modulo.aguardar_intervalo_api()
+            modulo.aguardar_intervalo_api()
+        esperar.assert_called_once()
+        self.assertAlmostEqual(esperar.call_args.args[0], 0.25)
+
+
 class IndicadoresTests(unittest.TestCase):
     def base(self):
         clientes = [
@@ -155,7 +251,7 @@ class IndicadoresTests(unittest.TestCase):
              "valor_total": "999", "nome_situacao": "Cancelada"},
             {"id": 13, "cliente_id": None, "valor_total": "999"},
         ]
-        with patch.object(modulo, "listar_todos", side_effect=[clientes, vendas]), \
+        with patch.object(modulo, "listar_todos", side_effect=[clientes, [{"id": "1"}], vendas, []]), \
              patch.object(modulo, "hoje_local", return_value=HOJE):
             return modulo.gerar_base_clientes()
 
@@ -213,7 +309,7 @@ class IndicadoresTests(unittest.TestCase):
 
     def test_venda_com_data_invalida_falha(self):
         with patch.object(modulo, "listar_todos", side_effect=[
-            [{"id": 1}], [{"cliente_id": 1, "valor_total": 1, "data": "inválida"}]
+            [{"id": 1}], [{"id": "1"}], [{"id": 1, "cliente_id": 1, "valor_total": 1, "data": "inválida"}], []
         ]), self.assertRaisesRegex(RuntimeError, "data"):
             modulo.gerar_base_clientes()
 
@@ -221,10 +317,12 @@ class IndicadoresTests(unittest.TestCase):
         respostas = [
             {"dados": [{"id": 1, "nome": "A"}], "meta": {"proxima_pagina": 2}},
             {"dados": [{"id": 2, "nome": "B"}], "meta": {"proxima_pagina": None}},
+            {"data": [{"id": "1"}], "meta": {"proxima_url": None}},
             {"data": [{"id": 10, "cliente_id": 1, "valor_total": "100", "data": "2026-10-01"}],
              "meta": {"proxima_url": "/api/vendas?pagina=2"}},
             {"data": [{"id": 11, "cliente_id": 1, "valor_total": "300", "data": "2026-10-08"}],
              "meta": {"proxima_url": None}},
+            {"data": [], "meta": {"proxima_url": None}},
         ]
         with patch.object(modulo, "consultar_api", side_effect=respostas) as consulta, \
              patch.object(modulo, "hoje_local", return_value=HOJE):
@@ -234,7 +332,7 @@ class IndicadoresTests(unittest.TestCase):
         self.assertEqual(base[0]["ticket_medio"], 200)
         self.assertEqual(base[0]["ultima_compra"], "2026-10-08")
         self.assertEqual([c.args[0] for c in consulta.call_args_list],
-                         ["clientes", "clientes", "vendas", "vendas"])
+                         ["clientes", "clientes", "lojas", "vendas", "vendas", "vendas"])
 
     def test_aniversario_29_fevereiro(self):
         with patch.object(modulo, "hoje_local", return_value=date(2027, 2, 27)):
@@ -303,6 +401,109 @@ class RotasTests(unittest.TestCase):
             self.assertIn(rota, rotas)
 
 
+
+class VendasBalcaoTests(unittest.TestCase):
+    def test_inclui_balcao_sem_duplicar_venda_da_consulta_padrao(self):
+        venda = {"id": 1}
+        with patch.object(modulo, "listar_todos", side_effect=[
+            [{"id": "1"}], [venda], [{"id": "1"}, {"id": 2}]
+        ]) as listar:
+            resultado = modulo.listar_vendas()
+        self.assertEqual(resultado, [venda, {"id": 2}])
+        self.assertEqual(listar.call_args_list[2].args, (
+            "vendas", {"loja_id": "1", "tipo": "vendas_balcao"}
+        ))
+
+    def test_falha_balcao_nao_devolve_historico_parcial(self):
+        with patch.object(modulo, "listar_todos", side_effect=[
+            [{"id": "1"}], [{"id": 1}], requests.Timeout("teste")
+        ]), self.assertRaises(requests.Timeout):
+            modulo.listar_vendas()
+
+    def test_venda_sem_id_nao_pode_ser_contada_duas_vezes(self):
+        with patch.object(modulo, "listar_todos", side_effect=[
+            [{"id": "1"}], [{"cliente_id": 1}], []
+        ]), self.assertRaisesRegex(RuntimeError, "sem ID"):
+            modulo.listar_vendas()
+
+
+    def test_matriz_filial_e_balcao_sem_duplicar(self):
+        with patch.object(modulo, "listar_todos", side_effect=[
+            [{"id": 1}, {"id": 2}],
+            [{"id": 10}], [{"id": 11}],
+            [{"id": "10"}, {"id": 12}], [{"id": 13}],
+        ]) as listar:
+            vendas = modulo.listar_vendas()
+        self.assertEqual([v["id"] for v in vendas], [10, 11, 12, 13])
+        self.assertEqual([c.args for c in listar.call_args_list], [
+            ("lojas",),
+            ("vendas", {"loja_id": "1"}),
+            ("vendas", {"loja_id": "1", "tipo": "vendas_balcao"}),
+            ("vendas", {"loja_id": "2"}),
+            ("vendas", {"loja_id": "2", "tipo": "vendas_balcao"}),
+        ])
+
+    def test_falha_filial_nao_devolve_so_matriz(self):
+        with patch.object(modulo, "listar_todos", side_effect=[
+            [{"id": 1}, {"id": 2}], [{"id": 10}], [], requests.Timeout("teste")
+        ]), self.assertRaises(requests.Timeout):
+            modulo.listar_vendas()
+
+    def test_lojas_ausentes_ou_sem_id_falham(self):
+        for lojas in ([], [{"nome": "Matriz"}]):
+            with self.subTest(lojas=lojas), patch.object(
+                modulo, "listar_todos", return_value=lojas
+            ), self.assertRaisesRegex(RuntimeError, "loja|Loja"):
+                modulo.listar_vendas()
+
+    def test_paginacao_balcao_preserva_loja_e_tipo(self):
+        respostas = [
+            {"data": [{"id": 1}], "meta": {"proxima_url": None}},
+            {"data": [], "meta": {"proxima_url": None}},
+            {"data": [{"id": 10}], "meta": {"proxima_url": "/api/vendas?pagina=2"}},
+            {"data": [{"id": 11}], "meta": {"proxima_url": None, "total_registros": 2}},
+        ]
+        with patch.object(modulo, "consultar_api", side_effect=respostas) as consultar:
+            vendas = modulo.listar_vendas()
+        self.assertEqual(len(vendas), 2)
+        self.assertEqual(consultar.call_args_list[-1].args, (
+            "vendas", {"loja_id": "1", "tipo": "vendas_balcao", "pagina": 2, "limite": 100}
+        ))
+
+
+class DiagnosticoBalcaoTests(unittest.TestCase):
+    def test_estrutura_remove_valores_pessoais_em_todos_os_niveis(self):
+        dados = {"nome_cliente": "Pessoa Ficticia", "cpf": "12345678900",
+                 "consumidor": {"telefone": "38912345678"},
+                 "atributos": [{"valor": "email@teste.invalid"}], "data": None}
+        saida = str(diagnostico.estrutura(dados))
+        for valor in ("Pessoa Ficticia", "12345678900", "38912345678", "email@teste.invalid"):
+            self.assertNotIn(valor, saida)
+        self.assertIn("telefone", saida)
+        self.assertEqual(diagnostico.estrutura(dados)["data"], "null")
+
+    def test_filtra_codigo_consulta_filial_e_nao_duplica(self):
+        venda = {"id": 10, "codigo": 1759, "cliente_id": "", "nome_cliente": "Ficticio"}
+        with patch.object(diagnostico, "listar_todos", side_effect=[
+            [{"id": 1}, {"id": 2}], [venda, {"id": 11, "codigo": 1760}],
+            [venda, {"id": 12, "codigo": "1759", "cliente_id": 1}],
+        ]) as listar:
+            resultado = diagnostico.diagnosticar(1759)
+        self.assertEqual(resultado["vendas_encontradas"], 2)
+        self.assertFalse(resultado["vendas"][0]["cliente_id_preenchido"])
+        self.assertTrue(resultado["vendas"][1]["cliente_id_preenchido"])
+        self.assertEqual(listar.call_args_list[-1].args, (
+            "vendas", {"loja_id": "2", "tipo": "vendas_balcao", "codigo": 1759}
+        ))
+
+    def test_falha_filial_interrompe_diagnostico(self):
+        with patch.object(diagnostico, "listar_todos", side_effect=[
+            [{"id": 1}, {"id": 2}], [], requests.Timeout("teste")
+        ]), self.assertRaises(requests.Timeout):
+            diagnostico.diagnosticar(1759)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
