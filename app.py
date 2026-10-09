@@ -1276,21 +1276,21 @@ def teste_clientes_vendas():
 
                 ultima_compra = max(datas_compras) if datas_compras else None
 
-                 if ultima_compra:
-                     dias_sem_comprar = (date.today() - ultima_compra).days
+                if ultima_compra:
+                    dias_sem_comprar = (date.today() - ultima_compra).days
 
-                     if dias_sem_comprar <= DIAS_EM_RISCO:
-                         status_cliente = "Ativo"
-                
-                     elif dias_sem_comprar <= DIAS_INATIVO:
-                         status_cliente = "Em risco"
+                    if dias_sem_comprar <= DIAS_EM_RISCO:
+                        status_cliente = "Ativo"
+        
+                    elif dias_sem_comprar <= DIAS_INATIVO:
+                        status_cliente = "Em risco"
+    
+                    else:
+                        status_cliente = "Inativo"
 
-                     else:
-                         status_cliente = "Inativo"
-
-                 else:
-                     dias_sem_comprar = None
-                     status_cliente = "Sem histórico"
+                else:
+                    dias_sem_comprar = None
+                    status_cliente = "Sem histórico"
                 
                  ticket_medio = (
                      total_gasto / quantidade_compras
