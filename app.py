@@ -1271,10 +1271,10 @@ def teste_clientes_vendas():
 
                             datas_compras.append(data_convertida)
 
-                        except:
+                        except (ValueError, TypeError):
                             pass
 
-                 ultima_compra = max(datas_compras) if datas_compras else None
+                ultima_compra = max(datas_compras) if datas_compras else None
 
                  if ultima_compra:
                      dias_sem_comprar = (date.today() - ultima_compra).days
