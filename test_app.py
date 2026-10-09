@@ -155,7 +155,7 @@ class IndicadoresTests(unittest.TestCase):
              "valor_total": "999", "nome_situacao": "Cancelada"},
             {"id": 13, "cliente_id": None, "valor_total": "999"},
         ]
-        with patch.object(modulo, "listar_todos", side_effect=[clientes, vendas]), \
+        with patch.object(modulo, "listar_todos", side_effect=[clientes, vendas, [], []]), \
              patch.object(modulo, "hoje_local", return_value=HOJE):
             return modulo.gerar_base_clientes()
 
@@ -213,7 +213,7 @@ class IndicadoresTests(unittest.TestCase):
 
     def test_venda_com_data_invalida_falha(self):
         with patch.object(modulo, "listar_todos", side_effect=[
-            [{"id": 1}], [{"cliente_id": 1, "valor_total": 1, "data": "inválida"}]
+            [{"id": 1}], [{"cliente_id": 1, "valor_total": 1, "data": "inválida"}], [], []
         ]), self.assertRaisesRegex(RuntimeError, "data"):
             modulo.gerar_base_clientes()
 
@@ -225,6 +225,8 @@ class IndicadoresTests(unittest.TestCase):
              "meta": {"proxima_url": "/api/vendas?pagina=2"}},
             {"data": [{"id": 11, "cliente_id": 1, "valor_total": "300", "data": "2026-10-08"}],
              "meta": {"proxima_url": None}},
+            {"data": []},
+            {"data": []},
         ]
         with patch.object(modulo, "consultar_api", side_effect=respostas) as consulta, \
              patch.object(modulo, "hoje_local", return_value=HOJE):
@@ -234,7 +236,29 @@ class IndicadoresTests(unittest.TestCase):
         self.assertEqual(base[0]["ticket_medio"], 200)
         self.assertEqual(base[0]["ultima_compra"], "2026-10-08")
         self.assertEqual([c.args[0] for c in consulta.call_args_list],
-                         ["clientes", "clientes", "vendas", "vendas"])
+                         ["clientes", "clientes", "vendas", "vendas", "vendas", "vendas"])
+
+    def test_balcao_entra_no_historico_sem_duplicar_outros_tipos(self):
+        venda = {"id": 10, "cliente_id": 1, "valor_total": "23.90", "data": "2026-10-08"}
+        with patch.object(modulo, "listar_todos", side_effect=[
+            [{"id": 1, "nome": "Cliente de teste"}], [venda], [],
+            [dict(venda, id="10"), dict(venda, id=11)],
+        ]) as consulta:
+            cliente = modulo.gerar_base_clientes()[0]
+        self.assertEqual(cliente["compras"], 2)
+        self.assertEqual(cliente["total_gasto"], 47.80)
+        self.assertEqual(cliente["ticket_medio"], 23.90)
+        self.assertEqual([c.args for c in consulta.call_args_list[1:]], [
+            ("vendas", {"tipo": "produto"}),
+            ("vendas", {"tipo": "servico"}),
+            ("vendas", {"tipo": "vendas_balcao"}),
+        ])
+
+    def test_falha_balcao_nao_retorna_historico_parcial(self):
+        with patch.object(modulo, "listar_todos", side_effect=[
+            [{"id": 1}], [], [], requests.Timeout("teste")
+        ]), self.assertRaises(requests.Timeout):
+            modulo.gerar_base_clientes()
 
     def test_aniversario_29_fevereiro(self):
         with patch.object(modulo, "hoje_local", return_value=date(2027, 2, 27)):
@@ -295,6 +319,20 @@ class RotasTests(unittest.TestCase):
             resposta = self.client.get("/teste-gestaoclick")
         self.assertEqual(resposta.status_code, 502)
         self.assertEqual(resposta.json["status_http"], 401)
+
+    def test_diagnostico_balcao_com_codigo(self):
+        with patch.object(modulo, "consultar_api", return_value={"data": []}) as consulta:
+            resposta = self.client.get("/teste-vendas?tipo=vendas_balcao&codigo=1759")
+        self.assertEqual(resposta.status_code, 200)
+        consulta.assert_called_once_with("vendas", {
+            "pagina": 1, "limite": 100, "tipo": "vendas_balcao", "codigo": "1759"
+        })
+
+    def test_diagnostico_rejeita_filtros_invalidos(self):
+        for query in ("tipo=outro", "codigo=abc", "codigo=-1", "codigo=", "codigo=١"):
+            with self.subTest(query=query), patch.object(modulo, "consultar_api") as consulta:
+                self.assertEqual(self.client.get("/teste-vendas?" + query).status_code, 400)
+                consulta.assert_not_called()
 
     def test_rotas_atuais_preservadas(self):
         rotas = self.client.get("/rotas").json

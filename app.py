@@ -9,7 +9,7 @@ from datetime import date, datetime
 from collections import defaultdict
 
 import requests
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify, request
 from markupsafe import escape
 
 app = Flask(__name__)
@@ -350,11 +350,27 @@ def dias_ate_aniversario(data_nascimento):
 # MOTOR SMART ONE
 # =========================================================
 
+def listar_vendas():
+    """Consulta explicitamente os três tipos documentados pelo GestãoClick."""
+    vendas = []
+    ids_vistos = set()
+    for tipo in ("produto", "servico", "vendas_balcao"):
+        for venda in listar_todos("vendas", {"tipo": tipo}):
+            venda_id = venda.get("id")
+            if venda_id not in (None, ""):
+                venda_id = str(venda_id)
+                if venda_id in ids_vistos:
+                    continue
+                ids_vistos.add(venda_id)
+            vendas.append(venda)
+    return vendas
+
+
 def gerar_base_clientes():
 
     clientes = listar_todos("clientes")
 
-    vendas = listar_todos("vendas")
+    vendas = listar_vendas()
 
     historico = defaultdict(
         lambda: {
@@ -1214,8 +1230,20 @@ def dashboard():
         """, 500
 
 def diagnosticar_api(endpoint, campo_resposta="resposta"):
+    params = {"pagina": 1, "limite": 100}
+    if endpoint == "vendas":
+        tipo = request.args.get("tipo")
+        codigo = request.args.get("codigo")
+        if tipo is not None:
+            if tipo not in ("produto", "servico", "vendas_balcao"):
+                return jsonify({"erro": "Tipo de venda inválido."}), 400
+            params["tipo"] = tipo
+        if codigo is not None:
+            if not codigo.isascii() or not codigo.isdigit() or len(codigo) > 20:
+                return jsonify({"erro": "Código de venda inválido."}), 400
+            params["codigo"] = codigo
     try:
-        resposta = consultar_api(endpoint, {"pagina": 1, "limite": 100})
+        resposta = consultar_api(endpoint, params)
         return jsonify({"status_http": 200, campo_resposta: resposta})
     except requests.HTTPError as erro:
         status = erro.response.status_code if erro.response is not None else 502
