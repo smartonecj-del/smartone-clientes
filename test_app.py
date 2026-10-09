@@ -155,7 +155,7 @@ class IndicadoresTests(unittest.TestCase):
              "valor_total": "999", "nome_situacao": "Cancelada"},
             {"id": 13, "cliente_id": None, "valor_total": "999"},
         ]
-        with patch.object(modulo, "listar_todos", side_effect=[clientes, vendas, []]), \
+        with patch.object(modulo, "listar_todos", side_effect=[clientes, [{"id": "1"}], vendas, []]), \
              patch.object(modulo, "hoje_local", return_value=HOJE):
             return modulo.gerar_base_clientes()
 
@@ -213,7 +213,7 @@ class IndicadoresTests(unittest.TestCase):
 
     def test_venda_com_data_invalida_falha(self):
         with patch.object(modulo, "listar_todos", side_effect=[
-            [{"id": 1}], [{"id": 1, "cliente_id": 1, "valor_total": 1, "data": "inválida"}], []
+            [{"id": 1}], [{"id": "1"}], [{"id": 1, "cliente_id": 1, "valor_total": 1, "data": "inválida"}], []
         ]), self.assertRaisesRegex(RuntimeError, "data"):
             modulo.gerar_base_clientes()
 
@@ -221,6 +221,7 @@ class IndicadoresTests(unittest.TestCase):
         respostas = [
             {"dados": [{"id": 1, "nome": "A"}], "meta": {"proxima_pagina": 2}},
             {"dados": [{"id": 2, "nome": "B"}], "meta": {"proxima_pagina": None}},
+            {"data": [{"id": "1"}], "meta": {"proxima_url": None}},
             {"data": [{"id": 10, "cliente_id": 1, "valor_total": "100", "data": "2026-10-01"}],
              "meta": {"proxima_url": "/api/vendas?pagina=2"}},
             {"data": [{"id": 11, "cliente_id": 1, "valor_total": "300", "data": "2026-10-08"}],
@@ -235,7 +236,7 @@ class IndicadoresTests(unittest.TestCase):
         self.assertEqual(base[0]["ticket_medio"], 200)
         self.assertEqual(base[0]["ultima_compra"], "2026-10-08")
         self.assertEqual([c.args[0] for c in consulta.call_args_list],
-                         ["clientes", "clientes", "vendas", "vendas", "vendas"])
+                         ["clientes", "clientes", "lojas", "vendas", "vendas", "vendas"])
 
     def test_aniversario_29_fevereiro(self):
         with patch.object(modulo, "hoje_local", return_value=date(2027, 2, 27)):
@@ -309,27 +310,72 @@ class VendasBalcaoTests(unittest.TestCase):
     def test_inclui_balcao_sem_duplicar_venda_da_consulta_padrao(self):
         venda = {"id": 1}
         with patch.object(modulo, "listar_todos", side_effect=[
-            [venda], [{"id": "1"}, {"id": 2}]
+            [{"id": "1"}], [venda], [{"id": "1"}, {"id": 2}]
         ]) as listar:
             resultado = modulo.listar_vendas()
         self.assertEqual(resultado, [venda, {"id": 2}])
-        self.assertEqual(listar.call_args_list[1].args, (
-            "vendas", {"tipo": "vendas_balcao"}
+        self.assertEqual(listar.call_args_list[2].args, (
+            "vendas", {"loja_id": "1", "tipo": "vendas_balcao"}
         ))
 
     def test_falha_balcao_nao_devolve_historico_parcial(self):
         with patch.object(modulo, "listar_todos", side_effect=[
-            [{"id": 1}], requests.Timeout("teste")
+            [{"id": "1"}], [{"id": 1}], requests.Timeout("teste")
         ]), self.assertRaises(requests.Timeout):
             modulo.listar_vendas()
 
     def test_venda_sem_id_nao_pode_ser_contada_duas_vezes(self):
         with patch.object(modulo, "listar_todos", side_effect=[
-            [{"cliente_id": 1}], []
+            [{"id": "1"}], [{"cliente_id": 1}], []
         ]), self.assertRaisesRegex(RuntimeError, "sem ID"):
             modulo.listar_vendas()
 
 
+    def test_matriz_filial_e_balcao_sem_duplicar(self):
+        with patch.object(modulo, "listar_todos", side_effect=[
+            [{"id": 1}, {"id": 2}],
+            [{"id": 10}], [{"id": 11}],
+            [{"id": "10"}, {"id": 12}], [{"id": 13}],
+        ]) as listar:
+            vendas = modulo.listar_vendas()
+        self.assertEqual([v["id"] for v in vendas], [10, 11, 12, 13])
+        self.assertEqual([c.args for c in listar.call_args_list], [
+            ("lojas",),
+            ("vendas", {"loja_id": "1"}),
+            ("vendas", {"loja_id": "1", "tipo": "vendas_balcao"}),
+            ("vendas", {"loja_id": "2"}),
+            ("vendas", {"loja_id": "2", "tipo": "vendas_balcao"}),
+        ])
+
+    def test_falha_filial_nao_devolve_so_matriz(self):
+        with patch.object(modulo, "listar_todos", side_effect=[
+            [{"id": 1}, {"id": 2}], [{"id": 10}], [], requests.Timeout("teste")
+        ]), self.assertRaises(requests.Timeout):
+            modulo.listar_vendas()
+
+    def test_lojas_ausentes_ou_sem_id_falham(self):
+        for lojas in ([], [{"nome": "Matriz"}]):
+            with self.subTest(lojas=lojas), patch.object(
+                modulo, "listar_todos", return_value=lojas
+            ), self.assertRaisesRegex(RuntimeError, "loja|Loja"):
+                modulo.listar_vendas()
+
+    def test_paginacao_balcao_preserva_loja_e_tipo(self):
+        respostas = [
+            {"data": [{"id": 1}], "meta": {"proxima_url": None}},
+            {"data": [], "meta": {"proxima_url": None}},
+            {"data": [{"id": 10}], "meta": {"proxima_url": "/api/vendas?pagina=2"}},
+            {"data": [{"id": 11}], "meta": {"proxima_url": None, "total_registros": 2}},
+        ]
+        with patch.object(modulo, "consultar_api", side_effect=respostas) as consultar:
+            vendas = modulo.listar_vendas()
+        self.assertEqual(len(vendas), 2)
+        self.assertEqual(consultar.call_args_list[-1].args, (
+            "vendas", {"loja_id": "1", "tipo": "vendas_balcao", "pagina": 2, "limite": 100}
+        ))
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

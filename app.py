@@ -351,20 +351,34 @@ def dias_ate_aniversario(data_nascimento):
 # =========================================================
 
 def listar_vendas():
-    """Inclui o PDV balcão, que a consulta padrão pode deixar de fora."""
-    vendas = listar_todos("vendas")
-    vendas_balcao = listar_todos("vendas", {"tipo": "vendas_balcao"})
+    """Consulta vendas comuns e de balcão em cada loja acessível à chave."""
+    lojas = listar_todos("lojas")
+    if not lojas:
+        raise RuntimeError("Nenhuma loja disponível na API do GestãoClick.")
     resultado = []
     ids_vistos = set()
-    for venda in vendas + vendas_balcao:
-        identificador = venda.get("id")
-        if identificador in (None, ""):
-            raise RuntimeError("Venda sem ID; não é possível evitar duplicidade.")
-        identificador = str(identificador)
-        if identificador in ids_vistos:
+    lojas_vistas = set()
+    for loja in lojas:
+        loja_id = loja.get("id")
+        if loja_id in (None, ""):
+            raise RuntimeError("Loja sem ID no GestãoClick.")
+        loja_id = str(loja_id)
+        if loja_id in lojas_vistas:
             continue
-        ids_vistos.add(identificador)
-        resultado.append(venda)
+        lojas_vistas.add(loja_id)
+        for filtros in (
+            {"loja_id": loja_id},
+            {"loja_id": loja_id, "tipo": "vendas_balcao"},
+        ):
+            for venda in listar_todos("vendas", filtros):
+                identificador = venda.get("id")
+                if identificador in (None, ""):
+                    raise RuntimeError("Venda sem ID; não é possível evitar duplicidade.")
+                identificador = str(identificador)
+                if identificador in ids_vistos:
+                    continue
+                ids_vistos.add(identificador)
+                resultado.append(venda)
     return resultado
 
 
@@ -1324,3 +1338,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port
     )
+
