@@ -1,6 +1,8 @@
 
 import os
 import json
+import re
+import unicodedata
 from hashlib import sha256
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import parse_qs, urlparse
@@ -366,11 +368,45 @@ def listar_vendas():
     return vendas
 
 
+def telefone_normalizado(valor):
+    numero = re.sub(r"\D", "", str(valor or ""))
+    if len(numero) in (12, 13) and numero.startswith("55"):
+        numero = numero[2:]
+    return numero if len(numero) in (10, 11) else ""
+
+
+def chave_consumidor(nome, telefone):
+    nome = " ".join(unicodedata.normalize("NFC", str(nome or "")).casefold().split())
+    telefone = telefone_normalizado(telefone)
+    return (nome, telefone) if nome and telefone else None
+
+
+def consumidor_da_venda(venda):
+    # Formato observado na API: nome_cliente = "Nome completo - telefone".
+    # Nunca vincula somente pelo nome, ou somente por telefone compartilhado.
+    texto = str(venda.get("nome_cliente") or "").strip()
+    partes = re.fullmatch(r"(.+?)\s+-\s+([+()0-9 .-]+)", texto)
+    if not partes:
+        return None
+    nome, telefone = partes.group(1).strip(), telefone_normalizado(partes.group(2))
+    if not nome or not telefone:
+        return None
+    return {"nome": nome, "celular": telefone}
+
+
 def gerar_base_clientes():
 
     clientes = listar_todos("clientes")
 
     vendas = listar_vendas()
+
+    indice_consumidores = defaultdict(set)
+    for cliente in clientes:
+        for telefone in (cliente.get("celular"), cliente.get("telefone")):
+            chave = chave_consumidor(cliente.get("nome"), telefone)
+            if chave and cliente.get("id") not in (None, ""):
+                indice_consumidores[chave].add(str(cliente["id"]))
+    consumidores_avulsos = {}
 
     historico = defaultdict(
         lambda: {
@@ -403,8 +439,21 @@ def gerar_base_clientes():
             venda.get("cliente_id") or ""
         )
 
-        if not cliente_id:
-            continue
+        if cliente_id in ("", "0"):
+            consumidor = consumidor_da_venda(venda)
+            if consumidor is None:
+                continue
+            chave = chave_consumidor(consumidor["nome"], consumidor["celular"])
+            candidatos = indice_consumidores.get(chave, set())
+            if len(candidatos) == 1:
+                cliente_id = next(iter(candidatos))
+            else:
+                cliente_id = "consumidor-" + sha256(
+                    json.dumps(chave, ensure_ascii=False).encode("utf-8")
+                ).hexdigest()
+                if cliente_id not in consumidores_avulsos:
+                    consumidor.update({"id": cliente_id, "origem": "Identificado na venda"})
+                    consumidores_avulsos[cliente_id] = consumidor
 
         registro = historico[cliente_id]
 
@@ -468,7 +517,7 @@ def gerar_base_clientes():
 
     resultado = []
 
-    for cliente in clientes:
+    for cliente in clientes + list(consumidores_avulsos.values()):
 
         cliente_id = str(cliente.get("id"))
 
@@ -1114,7 +1163,9 @@ function filtrar() {
 
 @app.route("/")
 def dashboard():
-
+    # HEAD é usado para verificar disponibilidade; não deve consultar o ERP.
+    if request.method == "HEAD":
+        return "", 200
     try:
 
         clientes = gerar_base_clientes()
@@ -1232,6 +1283,7 @@ def dashboard():
 def diagnosticar_api(endpoint, campo_resposta="resposta"):
     params = {"pagina": 1, "limite": 100}
     if endpoint == "vendas":
+        venda_id = request.args.get("id")
         tipo = request.args.get("tipo")
         codigo = request.args.get("codigo")
         if tipo is not None:
@@ -1242,6 +1294,13 @@ def diagnosticar_api(endpoint, campo_resposta="resposta"):
             if not codigo.isascii() or not codigo.isdigit() or len(codigo) > 20:
                 return jsonify({"erro": "Código de venda inválido."}), 400
             params["codigo"] = codigo
+        if venda_id is not None:
+            if not venda_id.isascii() or not venda_id.isdigit() or len(venda_id) > 20:
+                return jsonify({"erro": "Identificador de venda inválido."}), 400
+            if tipo is not None or codigo is not None:
+                return jsonify({"erro": "Use o identificador sem tipo ou código."}), 400
+            endpoint = f"vendas/{venda_id}"
+            params = {}
     try:
         resposta = consultar_api(endpoint, params)
         return jsonify({"status_http": 200, campo_resposta: resposta})
