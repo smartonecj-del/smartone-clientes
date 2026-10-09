@@ -1,10 +1,16 @@
 
 import os
+import json
+from hashlib import sha256
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 from datetime import date, datetime
 from collections import defaultdict
 
 import requests
-from flask import Flask, render_template_string, request, jsonify
+from flask import Flask, render_template_string, jsonify
+from markupsafe import escape
 
 app = Flask(__name__)
 
@@ -63,36 +69,104 @@ def consultar_api(endpoint, params=None):
 
 
 def listar_todos(endpoint, filtros=None):
-    """
-    Percorre todas as páginas do GestãoClick.
-    Limite de 100 registros por página.
-    """
-
+    """Lê todas as páginas; nunca devolve uma base parcialmente carregada."""
     pagina = 1
     registros = []
+    ids_vistos = set()
+    paginas_vistas = set()
 
-    while True:
-
+    for _ in range(10000):
         params = dict(filtros or {})
-
-        params["pagina"] = pagina
-        params["limite"] = 100
-
+        params.update({"pagina": pagina, "limite": 100})
         resposta = consultar_api(endpoint, params)
+        if not isinstance(resposta, dict):
+            raise RuntimeError("Resposta inválida do GestãoClick.")
+        if str(resposta.get("code", 200)) != "200" or resposta.get("status") in (
+            "error", "erro", "fail", "failed"
+        ):
+            raise RuntimeError("O GestãoClick recusou a consulta.")
+        chave = "data" if "data" in resposta else "dados"
+        if chave not in resposta:
+            raise RuntimeError("Resposta do GestãoClick sem data/dados.")
+        dados = resposta[chave]
+        if not isinstance(dados, list) or any(
+            not isinstance(item, dict) for item in dados
+        ):
+            raise RuntimeError("Lista de registros inválida no GestãoClick.")
+        meta = resposta.get("meta") or {}
+        if not isinstance(meta, dict):
+            raise RuntimeError("Paginação inválida no GestãoClick.")
 
-        dados = resposta.get("data", [])
-        meta = resposta.get("meta", {})
+        assinatura = sha256(json.dumps(
+            dados, sort_keys=True, ensure_ascii=False
+        ).encode("utf-8")).digest()
+        if dados and assinatura in paginas_vistas:
+            raise RuntimeError("O GestãoClick repetiu uma página; consulta interrompida.")
+        paginas_vistas.add(assinatura)
+        for item in dados:
+            identificador = item.get("id")
+            if identificador not in (None, ""):
+                identificador = str(identificador)
+                if identificador in ids_vistos:
+                    continue
+                ids_vistos.add(identificador)
+            registros.append(item)
 
-        registros.extend(dados)
+        proxima = None
+        tem_proxima = False
+        for campo in ("proxima_url", "proxima_pagina"):
+            if campo in meta:
+                tem_proxima = True
+                proxima = meta[campo]
+                break
 
-        proxima = meta.get("proxima_pagina")
+        if not dados:
+            if meta.get("total_paginas") is not None and pagina < int(meta["total_paginas"]):
+                raise RuntimeError("Página vazia antes do fim da consulta no GestãoClick.")
+            if proxima:
+                raise RuntimeError("Página vazia com continuação no GestãoClick.")
+            if meta.get("total_registros") is not None:
+                if len(registros) != int(meta["total_registros"]):
+                    raise RuntimeError("Quantidade de registros incompleta no GestãoClick.")
+            return registros
 
-        if not proxima:
-            break
+        if tem_proxima:
+            if proxima in (None, "", False, 0, "0", "false"):
+                if meta.get("total_registros") is not None:
+                    if len(registros) != int(meta["total_registros"]):
+                        raise RuntimeError("Quantidade de registros incompleta no GestãoClick.")
+                return registros
+            if isinstance(proxima, str) and ("?" in proxima or "/" in proxima):
+                # Extrai somente o número; nunca envia tokens à URL recebida.
+                consulta = parse_qs(urlparse(proxima).query)
+                valor = consulta.get("pagina", [None])[0]
+                proxima = int(valor) if valor is not None else pagina + 1
+            elif isinstance(proxima, bool):
+                proxima = pagina + 1
+            else:
+                proxima = int(proxima)
+            if proxima <= pagina:
+                raise RuntimeError("Próxima página inválida no GestãoClick.")
+            pagina = proxima
+        elif meta.get("total_paginas") is not None:
+            if pagina >= int(meta["total_paginas"]):
+                if meta.get("total_registros") is not None:
+                    if len(registros) != int(meta["total_registros"]):
+                        raise RuntimeError("Quantidade de registros incompleta no GestãoClick.")
+                return registros
+            pagina += 1
+        elif meta.get("total_registros") is not None:
+            total = int(meta["total_registros"])
+            if len(registros) == total:
+                return registros
+            if len(registros) > total:
+                raise RuntimeError("Total de registros inconsistente no GestãoClick.")
+            pagina += 1
+        else:
+            # Sem metadados, uma página curta não garante o fim da lista.
+            pagina += 1
 
-        pagina += 1
-
-    return registros
+    raise RuntimeError("Limite de páginas excedido; base não carregada.")
 
 
 # =========================================================
@@ -115,19 +189,65 @@ def moeda(valor):
         return "R$ 0,00"
 
 
+def hoje_local():
+    return datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+
+
 def converter_data(data_string):
-
-    if not data_string:
+    if isinstance(data_string, datetime):
+        return data_string.date()
+    if isinstance(data_string, date):
+        return data_string
+    if not isinstance(data_string, str) or not data_string.strip():
         return None
-
+    texto = data_string.strip()
     try:
-        return datetime.strptime(
-            data_string,
-            "%Y-%m-%d"
-        ).date()
+        return datetime.fromisoformat(texto.replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return datetime.strptime(texto, "%d/%m/%Y").date()
+        except ValueError:
+            return None
 
-    except:
-        return None
+
+def valor_decimal(valor):
+    """Aceita decimais da API e valores monetários brasileiros."""
+    texto = str(valor).strip().replace("R$", "").replace(" ", "")
+    if "," in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    try:
+        numero = Decimal(texto)
+    except InvalidOperation as erro:
+        raise RuntimeError("Valor monetário inválido no GestãoClick.") from erro
+    if not numero.is_finite():
+        raise RuntimeError("Valor monetário inválido no GestãoClick.")
+    return numero
+
+
+def total_da_venda(venda):
+    # Total da venda tem prioridade. Parcelas não são compras adicionais.
+    if venda.get("valor_total") not in (None, ""):
+        return valor_decimal(venda["valor_total"])
+    pagamentos = venda.get("pagamentos") or []
+    if not pagamentos:
+        raise RuntimeError("Venda sem valor_total ou pagamentos no GestãoClick.")
+    total = Decimal("0")
+    for item in pagamentos:
+        pagamento = item.get("pagamento", item)
+        valor = pagamento.get("valor")
+        if valor in (None, ""):
+            raise RuntimeError("Pagamento sem valor no GestãoClick.")
+        total += valor_decimal(valor)
+    return total
+
+
+def venda_cancelada(venda):
+    # Situações possuem IDs personalizados: não presumir um ID de cancelamento.
+    return (
+        str(venda.get("cancelado", "")).lower() in ("1", "true", "sim")
+        or str(venda.get("nome_situacao", "")).strip().casefold()
+        in ("cancelado", "cancelada")
+    )
 
 
 def formatar_data(data_string):
@@ -147,7 +267,7 @@ def dias_desde(data_string):
     if not data_obj:
         return None
 
-    return (date.today() - data_obj).days
+    return (hoje_local() - data_obj).days
 
 
 def definir_status(ultima_compra):
@@ -181,7 +301,7 @@ def aniversario_hoje(data_nascimento):
     if not nascimento:
         return False
 
-    hoje = date.today()
+    hoje = hoje_local()
 
     return (
         nascimento.day == hoje.day
@@ -196,7 +316,7 @@ def dias_ate_aniversario(data_nascimento):
     if not nascimento:
         return None
 
-    hoje = date.today()
+    hoje = hoje_local()
 
     try:
         proximo = nascimento.replace(year=hoje.year)
@@ -239,7 +359,7 @@ def gerar_base_clientes():
     historico = defaultdict(
         lambda: {
             "compras": 0,
-            "total": 0.0,
+            "total": Decimal("0"),
             "ultima_compra": None,
             "produtos": [],
             "servicos": [],
@@ -252,7 +372,16 @@ def gerar_base_clientes():
     # PROCESSAR VENDAS
     # -----------------------------------------------------
 
+    vendas_vistas = set()
     for venda in vendas:
+        venda_id = venda.get("id")
+        if venda_id not in (None, ""):
+            venda_id = str(venda_id)
+            if venda_id in vendas_vistas:
+                continue
+            vendas_vistas.add(venda_id)
+        if venda_cancelada(venda):
+            continue
 
         cliente_id = str(
             venda.get("cliente_id") or ""
@@ -265,22 +394,15 @@ def gerar_base_clientes():
 
         registro["compras"] += 1
 
-        try:
-            registro["total"] += float(
-                venda.get("valor_total") or 0
-            )
-        except:
-            pass
-
-        data_venda = venda.get("data")
-
-        if data_venda:
-
-            if (
-                registro["ultima_compra"] is None
-                or data_venda > registro["ultima_compra"]
-            ):
-                registro["ultima_compra"] = data_venda
+        registro["total"] += total_da_venda(venda)
+        data_venda = converter_data(venda.get("data"))
+        if data_venda is None:
+            raise RuntimeError("Venda com data ausente ou inválida no GestãoClick.")
+        if (
+            registro["ultima_compra"] is None
+            or data_venda > registro["ultima_compra"]
+        ):
+            registro["ultima_compra"] = data_venda
 
         # vendedor
 
@@ -338,15 +460,12 @@ def gerar_base_clientes():
 
         compras = h["compras"]
 
-        total = round(
-            h["total"],
-            2
-        )
-
+        total = float(h["total"].quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
         ticket = (
-            round(total / compras, 2)
-            if compras
-            else 0
+            float((h["total"] / compras).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            ))
+            if compras else 0.0
         )
 
         status = definir_status(
@@ -413,7 +532,7 @@ def gerar_base_clientes():
             "cidade": cidade or "",
 
             "ultima_compra":
-                h["ultima_compra"],
+                h["ultima_compra"].isoformat() if h["ultima_compra"] else None,
 
             "ultima_compra_formatada":
                 formatar_data(
@@ -848,7 +967,7 @@ Status
 
 {% for cliente in clientes %}
 
-<tr>
+<tr data-status="{{ cliente.status|lower }}" data-vip="{{ 'true' if cliente.vip else 'false' }}">
 
 <td>
 
@@ -951,7 +1070,9 @@ function filtrar() {
 
         const atendeStatus =
             !status ||
-            texto.includes(status);
+            (status === "vip"
+                ? linha.dataset.vip === "true"
+                : linha.dataset.status === status);
 
         linha.style.display =
             atendeBusca &&
@@ -1083,7 +1204,7 @@ def dashboard():
         </p>
 
         <pre>
-        {str(erro)}
+        {escape(str(erro))}
         </pre>
 
         <p>
@@ -1092,257 +1213,86 @@ def dashboard():
         </p>
         """, 500
 
+def diagnosticar_api(endpoint, campo_resposta="resposta"):
+    try:
+        resposta = consultar_api(endpoint, {"pagina": 1, "limite": 100})
+        return jsonify({"status_http": 200, campo_resposta: resposta})
+    except requests.HTTPError as erro:
+        status = erro.response.status_code if erro.response is not None else 502
+        return jsonify({
+            "status_http": status,
+            "erro": "O GestãoClick recusou a consulta."
+        }), 502
+    except (requests.RequestException, ValueError):
+        return jsonify({"erro": "Falha na comunicação com o GestãoClick."}), 502
+    except RuntimeError as erro:
+        return jsonify({"erro": str(erro)}), 500
+
+
 @app.route("/teste-gestaoclick")
 def teste_gestaoclick():
-    try:
-        resposta = requests.get(
-            f"{GESTAOCLICK_BASE_URL}/clientes",
-            headers={
-                "access-token": ACCESS_TOKEN,
-                "secret-access-token": SECRET_ACCESS_TOKEN,
-                "accept": "application/json"
-            },
-            timeout=30
-        )
+    return diagnosticar_api("clientes")
 
-        return jsonify({
-            "status_http": resposta.status_code,
-            "resposta": resposta.json()
-        })
 
-    except Exception as erro:
-        return jsonify({
-            "conexao": "erro",
-            "detalhes": str(erro)
-        }), 500
 @app.route("/health")
 def health():
-
-    return jsonify({
-        "status": "ok",
-        "app": "Smart One Clientes"
-    })
+    return jsonify({"status": "ok", "app": "Smart One Clientes"})
 
 
-# =========================================================
-# INICIAR
-# =========================================================
 @app.route("/teste-vendas")
 def teste_vendas():
-    url = f"{GESTAOCLICK_BASE_URL}/vendas"
+    return diagnosticar_api("vendas")
 
-    headers = {
-        "access-token": ACCESS_TOKEN,
-        "secret-access-token": SECRET_ACCESS_TOKEN,
-        "Accept": "application/json"
-    }
 
-    try:
-        resposta = requests.get(
-            url,
-            headers=headers,
-            timeout=30
-        )
-
-        return jsonify({
-            "status_http": resposta.status_code,
-            "resposta": resposta.json()
-        })
-
-    except Exception as erro:
-        return jsonify({
-            "erro": str(erro)
-        }), 500
 @app.route("/debug-clientes")
 def debug_clientes():
-    headers = {
-        "access-token": ACCESS_TOKEN,
-        "secret-access-token": SECRET_ACCESS_TOKEN,
-        "Accept": "application/json"
-    }
+    return diagnosticar_api("clientes", "resposta_completa")
 
-    try:
-        resposta = requests.get(
-            f"{GESTAOCLICK_BASE_URL}/clientes",
-            headers=headers,
-            timeout=30
-        )
 
-        return jsonify({
-            "status_http": resposta.status_code,
-            "resposta_completa": resposta.json()
-        })
-
-    except Exception as erro:
-        return jsonify({
-            "erro": str(erro)
-        }), 500
 @app.route("/debug-vendas")
 def debug_vendas():
-    headers = {
-        "access-token": ACCESS_TOKEN,
-        "secret-access-token": SECRET_ACCESS_TOKEN,
-        "Accept": "application/json"
-    }
+    return diagnosticar_api("vendas", "resposta_completa")
 
-    try:
-        resposta = requests.get(
-            f"{GESTAOCLICK_BASE_URL}/vendas",
-            headers=headers,
-            timeout=30
-        )
 
-        return jsonify({
-            "status_http": resposta.status_code,
-            "resposta_completa": resposta.json()
-        })
-
-    except Exception as erro:
-        return jsonify({
-            "erro": str(erro)
-        }), 500
 @app.route("/teste-clientes-vendas")
 def teste_clientes_vendas():
-    headers = {
-        "access-token": ACCESS_TOKEN,
-        "secret-access-token": SECRET_ACCESS_TOKEN,
-        "accept": "application/json"
-    } 
     try:
-           
-        # Buscar clientes
-        clientes = []
-        pagina = 1
-
-        while True:
-            resposta_clientes = requests.get(
-                f"{GESTAOCLICK_BASE_URL}/clientes",
-                headers=headers,
-                params={"pagina": pagina},
-                timeout=30
-            )
-            resposta_clientes.raise_for_status()
-
-            clientes_json = resposta_clientes.json()
-            lote = clientes_json.get("dados", [])
-
-            if not lote:
-                break
-
-            clientes.extend(lote)
-            pagina += 1
-
-        # Buscar vendas
-        resposta_vendas = requests.get(
-            f"{GESTAOCLICK_BASE_URL}/vendas",
-            headers=headers,
-            timeout=30
-        )
-        resposta_vendas.raise_for_status()
-        vendas_json = resposta_vendas.json()
-        vendas = vendas_json.get("dados", [])
-
-            # Organizar vendas por cliente
-            historico = defaultdict(list)
-    
-            for venda in vendas:
-                cliente_id = str(venda.get("cliente_id", ""))
-        
-                if cliente_id:
-                    historico[cliente_id].append(venda)
-        
-            resultado = []
-    
-            for cliente in clientes:
-    
-                cliente_id = str(cliente.get("id", ""))
-                vendas_cliente = historico.get(cliente_id, [])
-    
-                quantidade_compras = len(vendas_cliente)
-    
-                total_gasto = 0
-    
-                for venda in vendas_cliente:
-                    for pagamento in venda.get("pagamentos",[]):
-                        try:
-                            total_gasto += float(
-                                pagamento.get("pagamento", {}) .get("valor", 0) or 0
-                            )
-                        except:
-                            pass
-                datas_compras = []
-
-                for venda in vendas_cliente:
-                    data_venda = venda.get("data", "")
-
-                    if data_venda:
-                        try:
-                            data_convertida = datetime.strptime(
-                                data_venda[:10],
-                                "%Y-%m-%d"
-                            ).date()
-
-                            datas_compras.append(data_convertida)
-
-                        except (ValueError, TypeError):
-                            pass
-
-                ultima_compra = max(datas_compras) if datas_compras else None
-
-                if ultima_compra:
-                    dias_sem_comprar = (date.today() - ultima_compra).days
-
-                    if dias_sem_comprar <= DIAS_EM_RISCO:
-                        status_cliente = "Ativo"
-        
-                    elif dias_sem_comprar <= DIAS_INATIVO:
-                        status_cliente = "Em risco"
-    
-                    else:
-                        status_cliente = "Inativo"
-
-                else:
-                    dias_sem_comprar = None
-                    status_cliente = "Sem histórico"
-                
-                ticket_medio = (
-                    total_gasto / quantidade_compras
-                    if quantidade_compras > 0
-                    else 0
-                )
-                    
-                resultado.append({
-                    "id": cliente_id,
-                    "nome": cliente.get("nome", ""),
-                    "celular": cliente.get("celular", ""),
-                    "data_nascimento": cliente.get(
-                    "data_nascimento", ""
-                    ),
-                    "quantidade_compras": quantidade_compras,
-                    "total_gasto": round(total_gasto, 2),
-                    "ticket_medio": round(ticket_medio, 2),
-                    "ultima_compra": ultima_compra,
-                    "dias_sem_comprar": dias_sem_comprar,
-                    "status": status_cliente
-                })
-        
-            return jsonify({
-                "code": 200,
-                "quantidade_clientes": len(resultado),
-                "clientes": resultado
-            })
-
-    except Exception as erro:
+        clientes = gerar_base_clientes()
+        resultado = [{
+            "id": cliente["id"],
+            "nome": cliente["nome"],
+            "celular": cliente["celular"],
+            "data_nascimento": cliente["data_nascimento"],
+            "quantidade_compras": cliente["compras"],
+            "total_gasto": cliente["total_gasto"],
+            "ticket_medio": cliente["ticket_medio"],
+            "ultima_compra": cliente["ultima_compra"],
+            "dias_sem_comprar": cliente["dias_sem_comprar"],
+            "status": cliente["status"]
+        } for cliente in clientes]
+        return jsonify({
+            "code": 200,
+            "quantidade_clientes": len(resultado),
+            "clientes": resultado
+        })
+    except Exception:
+        app.logger.exception("Falha ao consolidar clientes e vendas")
         return jsonify({
             "code": 500,
-            "erro": str(erro)
+            "erro": "Não foi possível carregar a base completa do GestãoClick."
         }), 500
+
+
 @app.route("/rotas")
 def rotas():
     return jsonify([
         str(regra)
         for regra in app.url_map.iter_rules()
 ])
+
+# =========================================================
+# INICIAR
+# =========================================================
 if __name__ == "__main__":
 
     port = int(
