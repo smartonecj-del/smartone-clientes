@@ -155,7 +155,7 @@ class IndicadoresTests(unittest.TestCase):
              "valor_total": "999", "nome_situacao": "Cancelada"},
             {"id": 13, "cliente_id": None, "valor_total": "999"},
         ]
-        with patch.object(modulo, "listar_todos", side_effect=[clientes, vendas]), \
+        with patch.object(modulo, "listar_todos", side_effect=[clientes, vendas, []]), \
              patch.object(modulo, "hoje_local", return_value=HOJE):
             return modulo.gerar_base_clientes()
 
@@ -213,7 +213,7 @@ class IndicadoresTests(unittest.TestCase):
 
     def test_venda_com_data_invalida_falha(self):
         with patch.object(modulo, "listar_todos", side_effect=[
-            [{"id": 1}], [{"cliente_id": 1, "valor_total": 1, "data": "inválida"}]
+            [{"id": 1}], [{"id": 1, "cliente_id": 1, "valor_total": 1, "data": "inválida"}], []
         ]), self.assertRaisesRegex(RuntimeError, "data"):
             modulo.gerar_base_clientes()
 
@@ -225,6 +225,7 @@ class IndicadoresTests(unittest.TestCase):
              "meta": {"proxima_url": "/api/vendas?pagina=2"}},
             {"data": [{"id": 11, "cliente_id": 1, "valor_total": "300", "data": "2026-10-08"}],
              "meta": {"proxima_url": None}},
+            {"data": [], "meta": {"proxima_url": None}},
         ]
         with patch.object(modulo, "consultar_api", side_effect=respostas) as consulta, \
              patch.object(modulo, "hoje_local", return_value=HOJE):
@@ -234,7 +235,7 @@ class IndicadoresTests(unittest.TestCase):
         self.assertEqual(base[0]["ticket_medio"], 200)
         self.assertEqual(base[0]["ultima_compra"], "2026-10-08")
         self.assertEqual([c.args[0] for c in consulta.call_args_list],
-                         ["clientes", "clientes", "vendas", "vendas"])
+                         ["clientes", "clientes", "vendas", "vendas", "vendas"])
 
     def test_aniversario_29_fevereiro(self):
         with patch.object(modulo, "hoje_local", return_value=date(2027, 2, 27)):
@@ -301,6 +302,32 @@ class RotasTests(unittest.TestCase):
         for rota in ("/", "/health", "/teste-clientes-vendas", "/teste-gestaoclick",
                      "/teste-vendas", "/debug-clientes", "/debug-vendas"):
             self.assertIn(rota, rotas)
+
+
+
+class VendasBalcaoTests(unittest.TestCase):
+    def test_inclui_balcao_sem_duplicar_venda_da_consulta_padrao(self):
+        venda = {"id": 1}
+        with patch.object(modulo, "listar_todos", side_effect=[
+            [venda], [{"id": "1"}, {"id": 2}]
+        ]) as listar:
+            resultado = modulo.listar_vendas()
+        self.assertEqual(resultado, [venda, {"id": 2}])
+        self.assertEqual(listar.call_args_list[1].args, (
+            "vendas", {"tipo": "vendas_balcao"}
+        ))
+
+    def test_falha_balcao_nao_devolve_historico_parcial(self):
+        with patch.object(modulo, "listar_todos", side_effect=[
+            [{"id": 1}], requests.Timeout("teste")
+        ]), self.assertRaises(requests.Timeout):
+            modulo.listar_vendas()
+
+    def test_venda_sem_id_nao_pode_ser_contada_duas_vezes(self):
+        with patch.object(modulo, "listar_todos", side_effect=[
+            [{"cliente_id": 1}], []
+        ]), self.assertRaisesRegex(RuntimeError, "sem ID"):
+            modulo.listar_vendas()
 
 
 if __name__ == "__main__":

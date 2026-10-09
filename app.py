@@ -350,11 +350,29 @@ def dias_ate_aniversario(data_nascimento):
 # MOTOR SMART ONE
 # =========================================================
 
+def listar_vendas():
+    """Inclui o PDV balcão, que a consulta padrão pode deixar de fora."""
+    vendas = listar_todos("vendas")
+    vendas_balcao = listar_todos("vendas", {"tipo": "vendas_balcao"})
+    resultado = []
+    ids_vistos = set()
+    for venda in vendas + vendas_balcao:
+        identificador = venda.get("id")
+        if identificador in (None, ""):
+            raise RuntimeError("Venda sem ID; não é possível evitar duplicidade.")
+        identificador = str(identificador)
+        if identificador in ids_vistos:
+            continue
+        ids_vistos.add(identificador)
+        resultado.append(venda)
+    return resultado
+
+
 def gerar_base_clientes():
 
     clientes = listar_todos("clientes")
 
-    vendas = listar_todos("vendas")
+    vendas = listar_vendas()
 
     historico = defaultdict(
         lambda: {
