@@ -1246,10 +1246,10 @@ def teste_clientes_vendas():
             historico = defaultdict(list)
     
             for venda in vendas:
-                    cliente_id = str(venda.get("cliente_id", ""))
+                cliente_id = str(venda.get("cliente_id", ""))
         
-                    if cliente_id:
-                        historico[cliente_id].append(venda)
+                if cliente_id:
+                    historico[cliente_id].append(venda)
         
             resultado = []
     
