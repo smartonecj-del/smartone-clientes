@@ -23,7 +23,7 @@ app.config["SMARTONE_ADMIN_PASSWORD"] = os.getenv("SMARTONE_ADMIN_PASSWORD", "")
 @app.before_request
 def exigir_autenticacao():
     # Apenas verificações sem dados continuam públicas.
-    if request.path == "/health" or (request.path == "/" and request.method == "HEAD"):
+    if request.path == "/health":
         return None
     senha = app.config["SMARTONE_ADMIN_PASSWORD"]
     usuario = app.config["SMARTONE_ADMIN_USER"]
@@ -1355,97 +1355,9 @@ def dashboard():
     except Exception:
         return pagina_carregamento(erro=True)
 
-def diagnosticar_api(endpoint, campo_resposta="resposta"):
-    params = {"pagina": 1, "limite": 100}
-    if endpoint == "vendas":
-        venda_id = request.args.get("id")
-        tipo = request.args.get("tipo")
-        codigo = request.args.get("codigo")
-        if tipo is not None:
-            if tipo not in ("produto", "servico", "vendas_balcao"):
-                return jsonify({"erro": "Tipo de venda inválido."}), 400
-            params["tipo"] = tipo
-        if codigo is not None:
-            if not codigo.isascii() or not codigo.isdigit() or len(codigo) > 20:
-                return jsonify({"erro": "Código de venda inválido."}), 400
-            params["codigo"] = codigo
-        if venda_id is not None:
-            if not venda_id.isascii() or not venda_id.isdigit() or len(venda_id) > 20:
-                return jsonify({"erro": "Identificador de venda inválido."}), 400
-            if tipo is not None or codigo is not None:
-                return jsonify({"erro": "Use o identificador sem tipo ou código."}), 400
-            endpoint = f"vendas/{venda_id}"
-            params = {}
-    try:
-        resposta = consultar_api(endpoint, params)
-        return jsonify({"status_http": 200, campo_resposta: resposta})
-    except requests.HTTPError as erro:
-        status = erro.response.status_code if erro.response is not None else 502
-        return jsonify({
-            "status_http": status,
-            "erro": "O GestãoClick recusou a consulta."
-        }), 502
-    except (requests.RequestException, ValueError):
-        return jsonify({"erro": "Falha na comunicação com o GestãoClick."}), 502
-    except RuntimeError as erro:
-        return jsonify({"erro": str(erro)}), 500
-
-
-@app.route("/teste-gestaoclick")
-def teste_gestaoclick():
-    return diagnosticar_api("clientes")
-
-
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "app": "Smart One Clientes"})
-
-
-@app.route("/teste-vendas")
-def teste_vendas():
-    return diagnosticar_api("vendas")
-
-
-@app.route("/debug-clientes")
-def debug_clientes():
-    return diagnosticar_api("clientes", "resposta_completa")
-
-
-@app.route("/debug-vendas")
-def debug_vendas():
-    return diagnosticar_api("vendas", "resposta_completa")
-
-
-@app.route("/teste-clientes-vendas")
-def teste_clientes_vendas():
-    try:
-        clientes = carregar_clientes()
-        resultado = [{
-            "id": cliente["id"],
-            "nome": cliente["nome"],
-            "celular": cliente["celular"],
-            "data_nascimento": cliente["data_nascimento"],
-            "quantidade_compras": cliente["compras"],
-            "total_gasto": cliente["total_gasto"],
-            "ticket_medio": cliente["ticket_medio"],
-            "ultima_compra": cliente["ultima_compra"],
-            "dias_sem_comprar": cliente["dias_sem_comprar"],
-            "status": cliente["status"]
-        } for cliente in clientes]
-        return jsonify({
-            "code": 200,
-            "sincronizacao": cache_clientes.estado(),
-            "quantidade_clientes": len(resultado),
-            "clientes": resultado
-        })
-    except BaseCarregando:
-        return jsonify({"code": 202, "sincronizacao": "atualizando"}), 202, {"Retry-After": "5"}
-    except Exception:
-        app.logger.exception("Falha ao consolidar clientes e vendas")
-        return jsonify({
-            "code": 500,
-            "erro": "Não foi possível carregar a base completa do GestãoClick."
-        }), 500
 
 
 @app.route("/rotas")
