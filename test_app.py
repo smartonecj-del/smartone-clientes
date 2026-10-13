@@ -155,7 +155,8 @@ class IndicadoresTests(unittest.TestCase):
              "valor_total": "999", "nome_situacao": "Cancelada"},
             {"id": 13, "cliente_id": None, "valor_total": "999"},
         ]
-        with patch.object(modulo, "listar_todos", side_effect=[clientes, vendas, [], []]), \
+        with patch.object(modulo, "listar_lojas", return_value=["1"]), \
+             patch.object(modulo, "listar_todos", side_effect=[clientes, vendas, [], []]), \
              patch.object(modulo, "hoje_local", return_value=HOJE):
             return modulo.gerar_base_clientes()
 
@@ -212,7 +213,8 @@ class IndicadoresTests(unittest.TestCase):
         self.assertIsNone(modulo.converter_data(None))
 
     def test_venda_com_data_invalida_falha(self):
-        with patch.object(modulo, "listar_todos", side_effect=[
+        with patch.object(modulo, "listar_lojas", return_value=["1"]), \
+             patch.object(modulo, "listar_todos", side_effect=[
             [{"id": 1}], [{"cliente_id": 1, "valor_total": 1, "data": "inválida"}], [], []
         ]), self.assertRaisesRegex(RuntimeError, "data"):
             modulo.gerar_base_clientes()
@@ -221,6 +223,7 @@ class IndicadoresTests(unittest.TestCase):
         respostas = [
             {"dados": [{"id": 1, "nome": "A"}], "meta": {"proxima_pagina": 2}},
             {"dados": [{"id": 2, "nome": "B"}], "meta": {"proxima_pagina": None}},
+            {"data": [{"id": "1", "nome": "Matriz"}]},
             {"data": [{"id": 10, "cliente_id": 1, "valor_total": "100", "data": "2026-10-01"}],
              "meta": {"proxima_url": "/api/vendas?pagina=2"}},
             {"data": [{"id": 11, "cliente_id": 1, "valor_total": "300", "data": "2026-10-08"}],
@@ -236,11 +239,12 @@ class IndicadoresTests(unittest.TestCase):
         self.assertEqual(base[0]["ticket_medio"], 200)
         self.assertEqual(base[0]["ultima_compra"], "2026-10-08")
         self.assertEqual([c.args[0] for c in consulta.call_args_list],
-                         ["clientes", "clientes", "vendas", "vendas", "vendas", "vendas"])
+                         ["clientes", "clientes", "lojas", "vendas", "vendas", "vendas", "vendas"])
 
     def test_balcao_entra_no_historico_sem_duplicar_outros_tipos(self):
         venda = {"id": 10, "cliente_id": 1, "valor_total": "23.90", "data": "2026-10-08"}
-        with patch.object(modulo, "listar_todos", side_effect=[
+        with patch.object(modulo, "listar_lojas", return_value=["1"]), \
+             patch.object(modulo, "listar_todos", side_effect=[
             [{"id": 1, "nome": "Cliente de teste"}], [venda], [],
             [dict(venda, id="10"), dict(venda, id=11)],
         ]) as consulta:
@@ -249,13 +253,14 @@ class IndicadoresTests(unittest.TestCase):
         self.assertEqual(cliente["total_gasto"], 47.80)
         self.assertEqual(cliente["ticket_medio"], 23.90)
         self.assertEqual([c.args for c in consulta.call_args_list[1:]], [
-            ("vendas", {"tipo": "produto"}),
-            ("vendas", {"tipo": "servico"}),
-            ("vendas", {"tipo": "vendas_balcao"}),
+            ("vendas", {"tipo": "produto", "loja_id": "1"}),
+            ("vendas", {"tipo": "servico", "loja_id": "1"}),
+            ("vendas", {"tipo": "vendas_balcao", "loja_id": "1"}),
         ])
 
     def test_falha_balcao_nao_retorna_historico_parcial(self):
-        with patch.object(modulo, "listar_todos", side_effect=[
+        with patch.object(modulo, "listar_lojas", return_value=["1"]), \
+             patch.object(modulo, "listar_todos", side_effect=[
             [{"id": 1}], [], [], requests.Timeout("teste")
         ]), self.assertRaises(requests.Timeout):
             modulo.gerar_base_clientes()
@@ -265,9 +270,36 @@ class IndicadoresTests(unittest.TestCase):
             self.assertEqual(modulo.dias_ate_aniversario("2000-02-29"), 1)
 
 
+class LojasTests(unittest.TestCase):
+    def test_lojas_sem_paginacao_e_sem_ids_repetidos(self):
+        with patch.object(modulo, "consultar_api", return_value={"data": [
+            {"id": "1"}, {"id": "2"}, {"id": 1}
+        ]}) as consulta:
+            self.assertEqual(modulo.listar_lojas(), ["1", "2"])
+            consulta.assert_called_once_with("lojas")
+
+    def test_nao_aceita_lojas_invalidas(self):
+        for payload in ({}, {"data": []}, {"data": [{}]}, {"status": "error", "data": [{"id": 1}]}):
+            with self.subTest(payload=payload), patch.object(modulo, "consultar_api", return_value=payload):
+                with self.assertRaises(RuntimeError):
+                    modulo.listar_lojas()
+
+    def test_importa_as_duas_lojas_sem_duplicar_vendas(self):
+        with patch.object(modulo, "listar_lojas", return_value=["1", "2"]), \
+             patch.object(modulo, "listar_todos", side_effect=[
+                 [{"id": "10"}], [], [], [{"id": "10"}], [], [{"id": "20"}]
+             ]) as consulta:
+            self.assertEqual(modulo.listar_vendas(), [{"id": "10"}, {"id": "20"}])
+        self.assertEqual([c.args[1] for c in consulta.call_args_list], [
+            {"loja_id": loja, "tipo": tipo} for loja in ("1", "2")
+            for tipo in ("produto", "servico", "vendas_balcao")
+        ])
+
+
 class ConsumidorTests(unittest.TestCase):
     def consolidar(self, clientes, vendas):
-        with patch.object(modulo, "listar_todos", return_value=clientes), \
+        with patch.object(modulo, "listar_lojas", return_value=["1"]), \
+             patch.object(modulo, "listar_todos", return_value=clientes), \
              patch.object(modulo, "listar_vendas", return_value=vendas):
             return modulo.gerar_base_clientes()
 
@@ -310,11 +342,34 @@ class ConsumidorTests(unittest.TestCase):
 
 class RotasTests(unittest.TestCase):
     def setUp(self):
+        import base64
+        configuracao = patch.dict(modulo.app.config, {"SMARTONE_ADMIN_USER": "teste",
+                                 "SMARTONE_ADMIN_PASSWORD": "senha-ficticia-somente-testes"})
+        configuracao.start()
+        self.addCleanup(configuracao.stop)
         self.client = modulo.app.test_client()
+        self.client.environ_base["HTTP_AUTHORIZATION"] = "Basic " + base64.b64encode(
+            b"teste:senha-ficticia-somente-testes").decode()
+
+    def test_primeira_carga_retorna_202_sem_indicadores_parciais(self):
+        with patch.object(modulo, "carregar_clientes", side_effect=modulo.BaseCarregando):
+            pagina = self.client.get("/")
+            self.assertEqual(pagina.status_code, 202)
+            self.assertIn("Preparando seu painel", pagina.text)
+            resposta = self.client.get("/teste-clientes-vendas")
+            self.assertEqual(resposta.status_code, 202)
+            self.assertNotIn("clientes", resposta.json)
+
+    def test_dashboard_nao_reordena_cache_compartilhado(self):
+        base = list(reversed(IndicadoresTests().base()))
+        ids = [c["id"] for c in base]
+        with patch.object(modulo, "carregar_clientes", return_value=base):
+            self.assertEqual(self.client.get("/").status_code, 200)
+        self.assertEqual([c["id"] for c in base], ids)
 
     def test_dashboard_e_json_mesmos_indicadores(self):
         base = IndicadoresTests().base()
-        with patch.object(modulo, "gerar_base_clientes", return_value=base):
+        with patch.object(modulo, "carregar_clientes", return_value=base):
             painel = self.client.get("/")
             api = self.client.get("/teste-clientes-vendas")
         self.assertEqual(painel.status_code, 200)
@@ -331,7 +386,7 @@ class RotasTests(unittest.TestCase):
         self.assertEqual(api.json["quantidade_clientes"], 2)
 
     def test_falha_api_nao_mostra_indicadores_zerados(self):
-        with patch.object(modulo, "gerar_base_clientes", side_effect=requests.Timeout("teste")), \
+        with patch.object(modulo, "carregar_clientes", side_effect=requests.Timeout("teste")), \
              patch.object(modulo.app.logger, "exception"):
             self.assertEqual(self.client.get("/").status_code, 500)
             self.assertEqual(self.client.get("/teste-clientes-vendas").status_code, 500)
