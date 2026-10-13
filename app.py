@@ -12,8 +12,10 @@ from datetime import date, datetime
 from collections import defaultdict
 
 import requests
-from flask import Flask, render_template_string, jsonify, request, url_for
+from flask import Flask, render_template_string, jsonify, request, url_for, redirect
 from base_cache import BaseCache, BaseCarregando
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from aniversarios_store import configurado as banco_aniversarios_configurado, listar_aniversarios, salvar_aniversario
 
 app = Flask(__name__)
 app.config["SMARTONE_ADMIN_USER"] = os.getenv("SMARTONE_ADMIN_USER", "admin")
@@ -1011,6 +1013,7 @@ Aniversários próximos 7 dias
 </div>
 
 
+<p><a href="/aniversarios" style="display:inline-block;padding:12px 16px;background:#175cd3;color:white;text-decoration:none;border-radius:8px;margin-top:18px">🎂 Abrir aba Aniversários</a></p>
 <h2 id="secaoClientes">
 Clientes
 </h2>
@@ -1252,6 +1255,8 @@ def dashboard():
     try:
 
         clientes = carregar_clientes()
+        locais_aniversarios, _ = carregar_aniversarios_locais()
+        clientes = clientes_com_aniversarios(clientes, locais_aniversarios)
 
         total = len(clientes)
 
@@ -1384,6 +1389,195 @@ def dashboard():
         return pagina_carregamento()
     except Exception:
         return pagina_carregamento(erro=True)
+
+# =========================================================
+# ANIVERSÁRIOS: dados locais, isolados do GestãoClick
+# =========================================================
+
+def token_aniversario():
+    senha = app.config["SMARTONE_ADMIN_PASSWORD"]
+    return URLSafeTimedSerializer(senha, salt="smartone-aniversarios-form-v1").dumps(
+        request.authorization.username if request.authorization else ""
+    )
+
+
+def validar_token_aniversario(token):
+    if not token or not isinstance(token, str):
+        return False
+    try:
+        usuario = URLSafeTimedSerializer(
+            app.config["SMARTONE_ADMIN_PASSWORD"], salt="smartone-aniversarios-form-v1"
+        ).loads(token, max_age=3600)
+    except (BadSignature, SignatureExpired):
+        return False
+    return usuario == app.config["SMARTONE_ADMIN_USER"]
+
+
+def carregar_aniversarios_locais():
+    if not banco_aniversarios_configurado():
+        return {}, "Banco de dados não configurado. O cadastro de aniversários está desativado."
+    try:
+        return listar_aniversarios(), None
+    except Exception:
+        app.logger.exception("Erro ao carregar aniversários persistentes")
+        return {}, "Não foi possível acessar os aniversários salvos. Tente novamente mais tarde."
+
+
+def clientes_com_aniversarios(clientes, locais):
+    resultado = []
+    for original in clientes:
+        cliente = original.copy()
+        nascimento = locais.get(str(cliente["id"]), cliente.get("data_nascimento"))
+        cliente["data_nascimento"] = nascimento
+        cliente["data_nascimento_formatada"] = formatar_data(nascimento)
+        cliente["aniversario_hoje"] = aniversario_hoje(nascimento)
+        cliente["dias_ate_aniversario"] = dias_ate_aniversario(nascimento)
+        resultado.append(cliente)
+    return resultado
+
+
+ANIVERSARIOS_HTML = """
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aniversários — Smart One Clientes</title>
+<style>
+*{box-sizing:border-box}body{font:15px Arial,sans-serif;background:#f5f7fb;color:#101828;margin:0}
+header{background:#111827;color:white;padding:22px 30px}
+header h1{font-size:22px;margin:0 0 8px}
+header a{color:#e5e7eb}
+main{max-width:1150px;margin:auto;padding:24px}
+.card{background:#fff;border:1px solid #e4e7ec;border-radius:14px;padding:20px;margin-bottom:18px}
+form.barra{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input,select,button{padding:11px;border:1px solid #d0d5dd;border-radius:8px;font:inherit}
+input[type="search"]{min-width:240px;flex:1}
+button{background:#175cd3;color:white;cursor:pointer}
+table{width:100%;border-collapse:collapse;background:white}
+th,td{padding:12px;border-bottom:1px solid #e4e7ec;text-align:left}
+th{background:#f9fafb}
+small,.muted{color:#667085}
+.msg{padding:14px;background:#fff7ed;border-radius:8px}
+.success{background:#ecfdf3}
+a{color:#175cd3}
+@media(max-width:760px){.scroll{overflow-x:auto}table{min-width:800px}}
+</style></head><body>
+<header><h1>SMART ONE CLIENTES · ANIVERSÁRIOS</h1><a href="/">← Voltar ao painel</a></header>
+<main>
+<div class="card">
+<h2>Consultar e cadastrar aniversários</h2>
+<p class="muted">Busque pelo nome ou telefone. Os dados são salvos apenas no Smart One Clientes.</p>
+{% if aviso %}<p class="msg">{{ aviso }}</p>{% endif %}
+{% if sucesso %}<p class="msg success">Aniversário salvo com sucesso.</p>{% endif %}
+<form method="get" action="/aniversarios" class="barra">
+<input type="search" name="busca" value="{{ busca }}" placeholder="Nome ou telefone" maxlength="100">
+<label>Mês <select name="mes">
+<option value="0" {% if mes == 0 %}selected{% endif %}>Todos os meses</option>
+{% for n,nome in meses %}<option value="{{ n }}" {% if mes == n %}selected{% endif %}>{{ nome }}</option>{% endfor %}
+</select></label>
+<button type="submit">Buscar</button>
+<a href="/aniversarios">Limpar</a>
+</form>
+</div>
+<div class="card">
+<h2>{% if busca %}Clientes encontrados{% else %}Aniversariantes do mês{% endif %}</h2>
+<p class="muted">Mostrando {{ exibidos }} de {{ total }} clientes. Para cadastrar uma data ausente, pesquise o cliente pelo nome ou telefone.</p>
+<div class="scroll"><table>
+<thead><tr><th>Cliente</th><th>Telefone</th><th>Aniversário</th><th>Cadastrar / editar</th><th>WhatsApp</th></tr></thead>
+<tbody>{% for cliente in clientes %}
+<tr><td><strong>{{ cliente.nome }}</strong></td><td>{{ cliente.celular }}</td>
+<td>{{ cliente.data_nascimento_formatada }}</td>
+<td><form method="post" action="/aniversarios/salvar" class="barra">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<input type="hidden" name="cliente_id" value="{{ cliente.id }}">
+<input type="hidden" name="busca" value="{{ busca }}">
+<input type="hidden" name="mes" value="{{ mes }}">
+<input type="date" name="data_nascimento" value="{{ cliente.data_nascimento_iso }}" required min="1900-01-01" max="{{ hoje }}" {% if not pode_salvar %}disabled{% endif %}>
+<button type="submit" {% if not pode_salvar %}disabled{% endif %}>Salvar</button>
+</form></td>
+<td>{% if cliente.whatsapp %}<a href="https://wa.me/55{{ cliente.whatsapp }}" target="_blank" rel="noopener noreferrer">Enviar parabéns</a>{% else %}—{% endif %}</td>
+</tr>{% else %}<tr><td colspan="5">Nenhum cliente encontrado.</td></tr>{% endfor %}
+</tbody></table></div>
+</div>
+</main></body></html>
+"""
+
+
+@app.route("/aniversarios")
+def tela_aniversarios():
+    try:
+        clientes = carregar_clientes()
+        locais, aviso = carregar_aniversarios_locais()
+        clientes = clientes_com_aniversarios(clientes, locais)
+        busca = request.args.get("busca", "").strip()[:100]
+        try:
+            mes = int(request.args.get("mes", str(hoje_local().month)))
+        except ValueError:
+            mes = hoje_local().month
+        mes = mes if 0 <= mes <= 12 else hoje_local().month
+        if busca:
+            busca_comparavel = busca.casefold()
+            selecionados = [c for c in clientes if busca_comparavel in
+                            (str(c.get("nome") or "") + " " + str(c.get("celular") or "")).casefold()]
+        else:
+            selecionados = [c for c in clientes
+                            if converter_data(c.get("data_nascimento")) is not None and
+                            (mes == 0 or converter_data(c["data_nascimento"]).month == mes)]
+        selecionados.sort(key=lambda c: (
+            (converter_data(c.get("data_nascimento")).month if converter_data(c.get("data_nascimento")) else 13),
+            (converter_data(c.get("data_nascimento")).day if converter_data(c.get("data_nascimento")) else 32),
+            str(c.get("nome") or "").casefold()
+        ))
+        exibidos = []
+        for cliente in selecionados[:80]:
+            data = converter_data(cliente.get("data_nascimento"))
+            telefone = re.sub(r"\D", "", str(cliente.get("celular") or ""))
+            if telefone.startswith("55") and len(telefone) in (12, 13):
+                telefone = telefone[2:]
+            exibidos.append({
+                **cliente,
+                "data_nascimento_iso": data.isoformat() if data else "",
+                "whatsapp": telefone if len(telefone) in (10, 11) else ""
+            })
+        return render_template_string(
+            ANIVERSARIOS_HTML, clientes=exibidos, total=len(selecionados),
+            exibidos=len(exibidos), busca=busca, mes=mes, csrf_token=token_aniversario(),
+            pode_salvar=banco_aniversarios_configurado() and aviso is None,
+            aviso=aviso, sucesso=request.args.get("salvo") == "1",
+            hoje=hoje_local().isoformat(),
+            meses=list(enumerate(("Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                                   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"), 1))
+        )
+    except BaseCarregando:
+        return pagina_carregamento()
+    except Exception:
+        app.logger.exception("Falha na aba Aniversários")
+        return pagina_carregamento(erro=True)
+
+
+@app.route("/aniversarios/salvar", methods=["POST"])
+def gravar_aniversario():
+    if not validar_token_aniversario(request.form.get("csrf_token")):
+        return jsonify({"erro": "Formulário expirado ou inválido. Atualize a página."}), 403
+    if not banco_aniversarios_configurado():
+        return jsonify({"erro": "O banco de dados persistente ainda não está configurado."}), 503
+    cliente_id = (request.form.get("cliente_id") or "").strip()
+    nascimento = converter_data(request.form.get("data_nascimento"))
+    if not nascimento or nascimento.year < 1900 or nascimento > hoje_local():
+        return jsonify({"erro": "Data de nascimento inválida."}), 400
+    try:
+        clientes = carregar_clientes()
+        if not any(str(cliente.get("id")) == cliente_id for cliente in clientes):
+            return jsonify({"erro": "Cliente não encontrado."}), 404
+        salvar_aniversario(cliente_id, nascimento)
+    except BaseCarregando:
+        return jsonify({"erro": "Aguarde a sincronização e tente novamente."}), 503
+    except Exception:
+        app.logger.exception("Falha ao salvar aniversário")
+        return jsonify({"erro": "Falha ao salvar aniversário. Tente novamente."}), 503
+    busca = (request.form.get("busca") or "").strip()[:100]
+    mes = (request.form.get("mes") or "").strip()
+    return redirect(url_for("tela_aniversarios", busca=busca, mes=mes, salvo=1), code=303)
+
 
 @app.route("/health")
 def health():
