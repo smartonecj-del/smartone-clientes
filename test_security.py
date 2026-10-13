@@ -153,8 +153,8 @@ class SegurancaTestes(unittest.TestCase):
         token = modulo.URLSafeTimedSerializer(
             self.senha, salt="smartone-aniversarios-form-v1"
         ).dumps(self.usuario)
-        with patch.object(modulo, "banco_aniversarios_configurado", return_value=True), \\
-             patch.object(modulo, "carregar_clientes", return_value=[{"id": "123"}]), \\
+        with patch.object(modulo, "banco_aniversarios_configurado", return_value=True), \
+             patch.object(modulo, "carregar_clientes", return_value=[{"id": "123"}]), \
              patch.object(modulo, "salvar_aniversario") as salvar:
             r = self.cliente.post(
                 "/aniversarios/salvar",
