@@ -53,6 +53,27 @@ class SegurancaTestes(unittest.TestCase):
                 resposta = self.cliente.get(rota, headers=self.autorizacao())
                 self.assertEqual(resposta.status_code, 404)
 
+
+    def test_cartoes_filtram_clientes(self):
+        html = modulo.HTML
+        filtros = {
+            "Clientes cadastrados": "",
+            "Clientes ativos": "Ativo",
+            "VIPs": "VIP",
+            "Clientes em risco": "Em risco",
+            "Clientes inativos": "Inativo",
+            "VIPs em risco/inativos": "vip_risco_inativo",
+        }
+        for titulo, filtro in filtros.items():
+            with self.subTest(cartao=titulo):
+                self.assertIn("abrirClientes('" + filtro + "')", html)
+                self.assertIn(titulo, html)
+        self.assertEqual(html.count('class="card filtro-card"'), 5)
+        self.assertIn('id="secaoClientes"', html)
+        self.assertIn('status === "vip_risco_inativo"', html)
+        self.assertIn('scrollIntoView', html)
+        self.assertEqual(html.count("</button>"), 6)
+
     def test_cabecalhos_restringem_cache(self):
         resposta = self.cliente.get("/health")
         self.assertIn("no-store", resposta.headers["Cache-Control"])
