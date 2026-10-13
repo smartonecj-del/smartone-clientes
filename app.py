@@ -900,9 +900,9 @@ Clientes cadastrados
 
 <div class="numero">
 {{ total }}
-</button>
-
 </div>
+
+</button>
 
 
 <button type="button" class="card filtro-card" onclick="abrirClientes('Ativo')">
@@ -913,9 +913,9 @@ Clientes ativos
 
 <div class="numero">
 {{ ativos }}
-</button>
-
 </div>
+
+</button>
 
 
 <button type="button" class="card filtro-card" onclick="abrirClientes('VIP')">
@@ -926,9 +926,9 @@ VIPs
 
 <div class="numero">
 {{ vips }}
-</button>
-
 </div>
+
+</button>
 
 
 <div class="card aniversario">
@@ -961,9 +961,9 @@ Clientes em risco
 
 <div class="numero">
 {{ em_risco }}
-</button>
-
 </div>
+
+</button>
 
 
 <button type="button" class="card alerta filtro-card" onclick="abrirClientes('Inativo')">
@@ -974,9 +974,9 @@ Clientes inativos
 
 <div class="numero">
 {{ inativos }}
-</button>
-
 </div>
+
+</button>
 
 
 <button type="button" class="card filtro-card" onclick="abrirClientes('vip_risco_inativo')">
@@ -987,9 +987,9 @@ VIPs em risco/inativos
 
 <div class="numero">
 {{ vips_reativar }}
-</button>
-
 </div>
+
+</button>
 
 
 <div class="card">
