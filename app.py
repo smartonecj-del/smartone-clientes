@@ -774,6 +774,10 @@ header p {
     padding: 18px;
 }
 
+.filtro-card { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.filtro-card:hover { border-color: #2563eb; background: #f1f6ff; }
+.filtro-card:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+
 .card small {
     color: #667085;
 }
@@ -888,7 +892,7 @@ Inteligência comercial conectada ao GestãoClick
 
 <div class="grid">
 
-<div class="card">
+<button type="button" class="card filtro-card" onclick="abrirClientes('')">
 
 <small>
 Clientes cadastrados
@@ -896,12 +900,12 @@ Clientes cadastrados
 
 <div class="numero">
 {{ total }}
-</div>
+</button>
 
 </div>
 
 
-<div class="card">
+<button type="button" class="card filtro-card" onclick="abrirClientes('Ativo')">
 
 <small>
 Clientes ativos
@@ -909,12 +913,12 @@ Clientes ativos
 
 <div class="numero">
 {{ ativos }}
-</div>
+</button>
 
 </div>
 
 
-<div class="card">
+<button type="button" class="card filtro-card" onclick="abrirClientes('VIP')">
 
 <small>
 VIPs
@@ -922,7 +926,7 @@ VIPs
 
 <div class="numero">
 {{ vips }}
-</div>
+</button>
 
 </div>
 
@@ -949,7 +953,7 @@ Oportunidades de hoje
 
 <div class="grid">
 
-<div class="card">
+<button type="button" class="card filtro-card" onclick="abrirClientes('Em risco')">
 
 <small>
 Clientes em risco
@@ -957,12 +961,12 @@ Clientes em risco
 
 <div class="numero">
 {{ em_risco }}
-</div>
+</button>
 
 </div>
 
 
-<div class="card alerta">
+<button type="button" class="card alerta filtro-card" onclick="abrirClientes('Inativo')">
 
 <small>
 Clientes inativos
@@ -970,12 +974,12 @@ Clientes inativos
 
 <div class="numero">
 {{ inativos }}
-</div>
+</button>
 
 </div>
 
 
-<div class="card">
+<button type="button" class="card filtro-card" onclick="abrirClientes('vip_risco_inativo')">
 
 <small>
 VIPs em risco/inativos
@@ -983,7 +987,7 @@ VIPs em risco/inativos
 
 <div class="numero">
 {{ vips_reativar }}
-</div>
+</button>
 
 </div>
 
@@ -1003,7 +1007,7 @@ Aniversários próximos 7 dias
 </div>
 
 
-<h2>
+<h2 id="secaoClientes">
 Clientes
 </h2>
 
@@ -1040,6 +1044,7 @@ Em risco
 <option value="Inativo">
 Inativo
 </option>
+<option value="vip_risco_inativo">VIP em risco/inativo</option>
 
 </select>
 
@@ -1162,6 +1167,13 @@ VIP
 
 <script>
 
+function abrirClientes(status) {
+    document.getElementById("busca").value = "";
+    document.getElementById("filtroStatus").value = status;
+    filtrar();
+    document.getElementById("secaoClientes").scrollIntoView({behavior: "smooth", block: "start"});
+}
+
 function filtrar() {
 
     const busca =
@@ -1194,7 +1206,9 @@ function filtrar() {
             !status ||
             (status === "vip"
                 ? linha.dataset.vip === "true"
-                : linha.dataset.status === status);
+                : status === "vip_risco_inativo"
+                    ? linha.dataset.vip === "true" && ["em risco", "inativo"].includes(linha.dataset.status)
+                    : linha.dataset.status === status);
 
         linha.style.display =
             atendeBusca &&
