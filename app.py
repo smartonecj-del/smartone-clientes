@@ -12,7 +12,7 @@ from datetime import date, datetime
 from collections import defaultdict
 
 import requests
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify, request, url_for
 from base_cache import BaseCache, BaseCarregando
 
 app = Flask(__name__)
@@ -774,6 +774,10 @@ header p {
     padding: 18px;
 }
 
+.paginacao { margin-top: 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: 14px; color: #475467; }
+.paginacao-acoes { display: flex; gap: 14px; align-items: center; }
+.paginacao a { color: #175cd3; text-decoration: none; padding: 8px 10px; border: 1px solid #d0d5dd; border-radius: 8px; background: white; }
+.paginacao a:hover { background: #eff4ff; }
 .filtro-card { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .filtro-card:hover { border-color: #2563eb; background: #f1f6ff; }
 .filtro-card:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
@@ -1016,35 +1020,36 @@ Clientes
 
 <input
 id="busca"
+value="{{ busca_atual|e }}"
 placeholder="Buscar cliente ou telefone..."
-onkeyup="filtrar()"
+oninput="agendarBusca()"
 >
 
 <select
 id="filtroStatus"
-onchange="filtrar()"
+onchange="aplicarFiltros()"
 >
 
-<option value="">
+<option value="" {% if not status_atual %}selected{% endif %}>
 Todos
 </option>
 
-<option value="VIP">
+<option value="VIP" {% if status_atual == "VIP" %}selected{% endif %}>
 VIP
 </option>
 
-<option value="Ativo">
+<option value="Ativo" {% if status_atual == "Ativo" %}selected{% endif %}>
 Ativo
 </option>
 
-<option value="Em risco">
+<option value="Em risco" {% if status_atual == "Em risco" %}selected{% endif %}>
 Em risco
 </option>
 
-<option value="Inativo">
+<option value="Inativo" {% if status_atual == "Inativo" %}selected{% endif %}>
 Inativo
 </option>
-<option value="vip_risco_inativo">VIP em risco/inativo</option>
+<option value="vip_risco_inativo" {% if status_atual == "vip_risco_inativo" %}selected{% endif %}>VIP em risco/inativo</option>
 
 </select>
 
@@ -1161,63 +1166,40 @@ VIP
 </tbody>
 
 </table>
-
+<div class="paginacao" aria-label="Paginação de clientes">
+  <span>Mostrando {{ exibindo_inicio }}–{{ exibindo_fim }} de {{ quantidade_filtrada }} clientes</span>
+  <div class="paginacao-acoes">
+    {% if pagina_atual > 1 %}
+    <a href="{{ url_for('dashboard', pagina=pagina_atual-1, status=status_atual, busca=busca_atual) }}#secaoClientes">← Anterior</a>
+    {% endif %}
+    <span>Página {{ pagina_atual }} de {{ total_paginas }}</span>
+    {% if pagina_atual < total_paginas %}
+    <a href="{{ url_for('dashboard', pagina=pagina_atual+1, status=status_atual, busca=busca_atual) }}#secaoClientes">Próxima →</a>
+    {% endif %}
+  </div>
+</div>
 </div>
 
 
 <script>
 
-function abrirClientes(status) {
-    document.getElementById("busca").value = "";
-    document.getElementById("filtroStatus").value = status;
-    filtrar();
-    document.getElementById("secaoClientes").scrollIntoView({behavior: "smooth", block: "start"});
+let esperaBusca;
+function irParaLista(status, busca, pagina) {
+    const parametros = new URLSearchParams();
+    if (status) parametros.set("status", status);
+    if (busca) parametros.set("busca", busca);
+    if (pagina > 1) parametros.set("pagina", String(pagina));
+    window.location.assign("/" + (parametros.toString() ? "?" + parametros.toString() : "") + "#secaoClientes");
 }
-
-function filtrar() {
-
-    const busca =
-        document
-        .getElementById("busca")
-        .value
-        .toLowerCase();
-
-    const status =
-        document
-        .getElementById("filtroStatus")
-        .value
-        .toLowerCase();
-
-    const linhas =
-        document.querySelectorAll(
-            "#tabela tbody tr"
-        );
-
-    linhas.forEach(linha => {
-
-        const texto =
-            linha.innerText
-            .toLowerCase();
-
-        const atendeBusca =
-            texto.includes(busca);
-
-        const atendeStatus =
-            !status ||
-            (status === "vip"
-                ? linha.dataset.vip === "true"
-                : status === "vip_risco_inativo"
-                    ? linha.dataset.vip === "true" && ["em risco", "inativo"].includes(linha.dataset.status)
-                    : linha.dataset.status === status);
-
-        linha.style.display =
-            atendeBusca &&
-            atendeStatus
-            ? ""
-            : "none";
-
-    });
-
+function abrirClientes(status) { irParaLista(status, "", 1); }
+function aplicarFiltros() {
+    clearTimeout(esperaBusca);
+    irParaLista(document.getElementById("filtroStatus").value,
+                document.getElementById("busca").value.trim(), 1);
+}
+function agendarBusca() {
+    clearTimeout(esperaBusca);
+    esperaBusca = setTimeout(aplicarFiltros, 450);
 }
 
 </script>
@@ -1325,16 +1307,43 @@ def dashboard():
             ]
         )
 
-        # VIPs primeiro
-        # depois maior gasto
+        # Filtrar e paginar no servidor para evitar milhares de linhas no navegador.
+        status_atual = request.args.get("status", "").strip()
+        if status_atual not in ("", "Ativo", "Em risco", "Inativo", "VIP", "vip_risco_inativo"):
+            status_atual = ""
+        busca_atual = request.args.get("busca", "").strip()[:100]
+        busca_normalizada = busca_atual.casefold()
 
-        clientes = sorted(clientes,
-            key=lambda c: (
-                c["vip"],
-                c["total_gasto"]
-            ),
+        def corresponde(cliente):
+            if status_atual == "VIP" and not cliente["vip"]:
+                return False
+            if status_atual == "vip_risco_inativo":
+                if not cliente["vip"] or cliente["status"] not in ("Em risco", "Inativo"):
+                    return False
+            elif status_atual not in ("", "VIP") and cliente["status"] != status_atual:
+                return False
+            if busca_normalizada:
+                conteudo = str(cliente.get("nome") or "") + " " + str(cliente.get("celular") or "")
+                return busca_normalizada in conteudo.casefold()
+            return True
+
+        clientes_filtrados = sorted(
+            (cliente for cliente in clientes if corresponde(cliente)),
+            key=lambda c: (c["vip"], c["total_gasto"]),
             reverse=True
         )
+        por_pagina = 80
+        quantidade_filtrada = len(clientes_filtrados)
+        total_paginas = max(1, (quantidade_filtrada + por_pagina - 1) // por_pagina)
+        try:
+            pagina_atual = int(request.args.get("pagina", "1"))
+        except ValueError:
+            pagina_atual = 1
+        pagina_atual = max(1, min(pagina_atual, total_paginas))
+        indice_inicio = (pagina_atual - 1) * por_pagina
+        clientes = clientes_filtrados[indice_inicio:indice_inicio + por_pagina]
+        exibindo_inicio = indice_inicio + 1 if quantidade_filtrada else 0
+        exibindo_fim = indice_inicio + len(clientes)
 
         return render_template_string(
 
@@ -1343,6 +1352,13 @@ def dashboard():
             sincronizacao=cache_clientes.estado(),
 
             clientes=clientes,
+            status_atual=status_atual,
+            busca_atual=busca_atual,
+            pagina_atual=pagina_atual,
+            total_paginas=total_paginas,
+            quantidade_filtrada=quantidade_filtrada,
+            exibindo_inicio=exibindo_inicio,
+            exibindo_fim=exibindo_fim,
 
             total=total,
 
