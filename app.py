@@ -3,6 +3,7 @@ import os
 import json
 import re
 import unicodedata
+from hmac import compare_digest
 from hashlib import sha256
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import parse_qs, urlparse
@@ -15,6 +16,39 @@ from flask import Flask, render_template_string, jsonify, request
 from base_cache import BaseCache, BaseCarregando
 
 app = Flask(__name__)
+app.config["SMARTONE_ADMIN_USER"] = os.getenv("SMARTONE_ADMIN_USER", "admin")
+app.config["SMARTONE_ADMIN_PASSWORD"] = os.getenv("SMARTONE_ADMIN_PASSWORD", "")
+
+
+@app.before_request
+def exigir_autenticacao():
+    # Apenas verificações sem dados continuam públicas.
+    if request.path == "/health" or (request.path == "/" and request.method == "HEAD"):
+        return None
+    senha = app.config["SMARTONE_ADMIN_PASSWORD"]
+    usuario = app.config["SMARTONE_ADMIN_USER"]
+    if not usuario or len(senha) < 20:
+        return jsonify({"erro": "Acesso restrito. Autenticação ainda não configurada."}), 503
+    credencial = request.authorization
+    if (credencial is not None and credencial.type == "basic"
+            and compare_digest((credencial.username or "").encode(), usuario.encode())
+            and compare_digest((credencial.password or "").encode(), senha.encode())):
+        return None
+    resposta = jsonify({"erro": "Autenticação necessária."})
+    resposta.status_code = 401
+    resposta.headers["WWW-Authenticate"] = 'Basic realm="Smart One Clientes", charset="UTF-8"'
+    return resposta
+
+
+@app.after_request
+def impedir_cache_publico(resposta):
+    resposta.headers["Cache-Control"] = "no-store, private"
+    resposta.headers["Pragma"] = "no-cache"
+    resposta.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    resposta.headers["Referrer-Policy"] = "no-referrer"
+    resposta.headers["X-Content-Type-Options"] = "nosniff"
+    resposta.vary.add("Authorization")
+    return resposta
 
 # =========================================================
 # CONFIGURAÇÃO

@@ -342,7 +342,14 @@ class ConsumidorTests(unittest.TestCase):
 
 class RotasTests(unittest.TestCase):
     def setUp(self):
+        import base64
+        configuracao = patch.dict(modulo.app.config, {"SMARTONE_ADMIN_USER": "teste",
+                                 "SMARTONE_ADMIN_PASSWORD": "senha-ficticia-somente-testes"})
+        configuracao.start()
+        self.addCleanup(configuracao.stop)
         self.client = modulo.app.test_client()
+        self.client.environ_base["HTTP_AUTHORIZATION"] = "Basic " + base64.b64encode(
+            b"teste:senha-ficticia-somente-testes").decode()
 
     def test_primeira_carga_retorna_202_sem_indicadores_parciais(self):
         with patch.object(modulo, "carregar_clientes", side_effect=modulo.BaseCarregando):
