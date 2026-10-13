@@ -70,8 +70,8 @@ class SegurancaTestes(unittest.TestCase):
                 self.assertIn(titulo, html)
         self.assertEqual(html.count('class="card filtro-card"'), 5)
         self.assertIn('id="secaoClientes"', html)
-        self.assertIn('status === "vip_risco_inativo"', html)
-        self.assertIn('scrollIntoView', html)
+        self.assertIn('status_atual == "vip_risco_inativo"', html)
+        self.assertIn('irParaLista(status, "", 1)', html)
         self.assertEqual(html.count("</button>"), 6)
 
 
