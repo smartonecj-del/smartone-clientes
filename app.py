@@ -12,7 +12,7 @@ from collections import defaultdict
 
 import requests
 from flask import Flask, render_template_string, jsonify, request
-from markupsafe import escape
+from base_cache import BaseCache, BaseCarregando
 
 app = Flask(__name__)
 
@@ -352,19 +352,34 @@ def dias_ate_aniversario(data_nascimento):
 # MOTOR SMART ONE
 # =========================================================
 
+def listar_lojas():
+    # /lojas retorna uma lista única, sem paginação na documentação oficial.
+    resposta = consultar_api("lojas")
+    if (not isinstance(resposta, dict) or str(resposta.get("code", 200)) != "200"
+            or resposta.get("status") in ("error", "erro", "fail", "failed")):
+        raise RuntimeError("Não foi possível consultar as lojas do GestãoClick.")
+    lojas = resposta.get("data", resposta.get("dados"))
+    if not isinstance(lojas, list) or not lojas or any(
+        not isinstance(loja, dict) or not loja.get("id") for loja in lojas
+    ):
+        raise RuntimeError("Lista de lojas inválida no GestãoClick.")
+    return list(dict.fromkeys(str(loja["id"]) for loja in lojas))
+
+
 def listar_vendas():
     """Consulta explicitamente os três tipos documentados pelo GestãoClick."""
     vendas = []
     ids_vistos = set()
-    for tipo in ("produto", "servico", "vendas_balcao"):
-        for venda in listar_todos("vendas", {"tipo": tipo}):
-            venda_id = venda.get("id")
-            if venda_id not in (None, ""):
-                venda_id = str(venda_id)
-                if venda_id in ids_vistos:
-                    continue
-                ids_vistos.add(venda_id)
-            vendas.append(venda)
+    for loja_id in listar_lojas():
+        for tipo in ("produto", "servico", "vendas_balcao"):
+            for venda in listar_todos("vendas", {"tipo": tipo, "loja_id": loja_id}):
+                venda_id = venda.get("id")
+                if venda_id not in (None, ""):
+                    venda_id = str(venda_id)
+                    if venda_id in ids_vistos:
+                        continue
+                    ids_vistos.add(venda_id)
+                vendas.append(venda)
     return vendas
 
 
@@ -814,6 +829,14 @@ th {
 </head>
 
 <body>
+{% if sincronizacao %}
+<div style="padding:12px 24px;background:#e8f1ff;color:#17427a;font-size:14px">
+{% if sincronizacao == 'atualizando' %}Atualizando as compras. Exibindo a última base completa.
+{% elif sincronizacao == 'erro' %}A atualização falhou. Exibindo a última base completa; tentaremos novamente.
+{% else %}Base sincronizada. Ao abrir o painel, verificamos se há uma atualização pendente.{% endif %}
+ <a href="/">Atualizar página</a>
+</div>
+{% endif %}
 
 <header>
 
@@ -1161,6 +1184,36 @@ function filtrar() {
 # ROTAS
 # =========================================================
 
+def sincronizar_clientes():
+    try:
+        return gerar_base_clientes()
+    except Exception:
+        app.logger.exception("Falha na sincronização completa das lojas")
+        raise
+
+
+cache_clientes = BaseCache(sincronizar_clientes)
+
+
+def carregar_clientes():
+    return cache_clientes.obter()
+
+
+def pagina_carregamento(erro=False):
+    titulo = "Sincronização temporariamente indisponível" if erro else "Preparando seu painel"
+    mensagem = ("Não conseguimos concluir a consulta. Vamos tentar novamente automaticamente."
+                if erro else "Estamos reunindo clientes e compras de todas as lojas. A primeira carga pode levar alguns minutos.")
+    return render_template_string("""<!doctype html><html lang="pt-BR"><head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="refresh" content="{{ intervalo }}"><title>Smart One Clientes</title>
+    <style>body{margin:0;background:#eff4fb;font:18px system-ui;color:#16304e;display:grid;min-height:100vh;place-items:center}
+    main{background:white;padding:40px;border-radius:20px;max-width:520px;margin:24px;box-shadow:0 15px 50px #183b6414}
+    p{line-height:1.6}small{color:#62748a}a{color:#155acf}</style></head>
+    <body><main><small>SMART ONE CLIENTES</small><h1>{{ titulo }}</h1><p>{{ mensagem }}</p>
+    <p>Esta página será atualizada automaticamente.</p><a href="/">Verificar agora</a></main></body></html>""",
+    titulo=titulo, mensagem=mensagem, intervalo=30 if erro else 5), 500 if erro else 202
+
+
 @app.route("/")
 def dashboard():
     # HEAD é usado para verificar disponibilidade; não deve consultar o ERP.
@@ -1168,7 +1221,7 @@ def dashboard():
         return "", 200
     try:
 
-        clientes = gerar_base_clientes()
+        clientes = carregar_clientes()
 
         total = len(clientes)
 
@@ -1227,7 +1280,7 @@ def dashboard():
         # VIPs primeiro
         # depois maior gasto
 
-        clientes.sort(
+        clientes = sorted(clientes,
             key=lambda c: (
                 c["vip"],
                 c["total_gasto"]
@@ -1238,6 +1291,8 @@ def dashboard():
         return render_template_string(
 
             HTML,
+
+            sincronizacao=cache_clientes.estado(),
 
             clientes=clientes,
 
@@ -1261,24 +1316,10 @@ def dashboard():
                 vips_reativar
         )
 
-    except Exception as erro:
-
-        return f"""
-        <h2>Smart One Clientes</h2>
-
-        <p>
-        Não foi possível carregar os dados.
-        </p>
-
-        <pre>
-        {escape(str(erro))}
-        </pre>
-
-        <p>
-        Verifique as variáveis de ambiente
-        do GestãoClick no Render.
-        </p>
-        """, 500
+    except BaseCarregando:
+        return pagina_carregamento()
+    except Exception:
+        return pagina_carregamento(erro=True)
 
 def diagnosticar_api(endpoint, campo_resposta="resposta"):
     params = {"pagina": 1, "limite": 100}
@@ -1344,7 +1385,7 @@ def debug_vendas():
 @app.route("/teste-clientes-vendas")
 def teste_clientes_vendas():
     try:
-        clientes = gerar_base_clientes()
+        clientes = carregar_clientes()
         resultado = [{
             "id": cliente["id"],
             "nome": cliente["nome"],
@@ -1359,9 +1400,12 @@ def teste_clientes_vendas():
         } for cliente in clientes]
         return jsonify({
             "code": 200,
+            "sincronizacao": cache_clientes.estado(),
             "quantidade_clientes": len(resultado),
             "clientes": resultado
         })
+    except BaseCarregando:
+        return jsonify({"code": 202, "sincronizacao": "atualizando"}), 202, {"Retry-After": "5"}
     except Exception:
         app.logger.exception("Falha ao consolidar clientes e vendas")
         return jsonify({
