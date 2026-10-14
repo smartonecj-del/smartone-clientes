@@ -114,6 +114,62 @@ class SegurancaTestes(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn("Mostrando 0–0 de 0 clientes", response.get_data(as_text=True))
 
+
+    def test_aniversarios_exigem_login(self):
+        self.assertEqual(self.cliente.get("/aniversarios").status_code, 401)
+        self.assertEqual(self.cliente.post("/aniversarios/salvar").status_code, 401)
+
+    def test_aniversarios_sem_banco_nao_permite_gravacao(self):
+        cliente = {
+            "id": "123", "nome": "Maria Silva", "celular": "38999999999",
+            "data_nascimento": None, "status": "Ativo", "vip": False,
+            "aniversario_hoje": False, "dias_ate_aniversario": None,
+        }
+        with patch.object(modulo, "carregar_clientes", return_value=[cliente]), \
+             patch.object(modulo, "banco_aniversarios_configurado", return_value=False):
+            resposta = self.cliente.get("/aniversarios?busca=Maria", headers=self.autorizacao())
+            self.assertEqual(resposta.status_code, 200)
+            html = resposta.get_data(as_text=True)
+            self.assertIn("Maria Silva", html)
+            self.assertIn("cadastro de aniversários está desativado", html)
+            token = modulo.URLSafeTimedSerializer(
+                self.senha, salt="smartone-aniversarios-form-v1"
+            ).dumps(self.usuario)
+            resposta = self.cliente.post(
+                "/aniversarios/salvar",
+                data={"csrf_token": token, "cliente_id": "123", "data_nascimento": "2000-04-10"},
+                headers=self.autorizacao(),
+            )
+            self.assertEqual(resposta.status_code, 503)
+
+    def test_aniversarios_validam_token_e_cliente(self):
+        with patch.object(modulo, "banco_aniversarios_configurado", return_value=True):
+            r = self.cliente.post(
+                "/aniversarios/salvar",
+                data={"csrf_token": "token-falso", "cliente_id": "123", "data_nascimento": "2000-04-10"},
+                headers=self.autorizacao(),
+            )
+            self.assertEqual(r.status_code, 403)
+        token = modulo.URLSafeTimedSerializer(
+            self.senha, salt="smartone-aniversarios-form-v1"
+        ).dumps(self.usuario)
+        with patch.object(modulo, "banco_aniversarios_configurado", return_value=True), \
+             patch.object(modulo, "carregar_clientes", return_value=[{"id": "123"}]), \
+             patch.object(modulo, "salvar_aniversario") as salvar:
+            r = self.cliente.post(
+                "/aniversarios/salvar",
+                data={"csrf_token": token, "cliente_id": "123", "data_nascimento": "2000-04-10"},
+                headers=self.autorizacao(),
+            )
+            self.assertEqual(r.status_code, 303)
+            salvar.assert_called_once()
+            r = self.cliente.post(
+                "/aniversarios/salvar",
+                data={"csrf_token": token, "cliente_id": "outro", "data_nascimento": "2000-04-10"},
+                headers=self.autorizacao(),
+            )
+            self.assertEqual(r.status_code, 404)
+
     def test_cabecalhos_restringem_cache(self):
         resposta = self.cliente.get("/health")
         self.assertIn("no-store", resposta.headers["Cache-Control"])
