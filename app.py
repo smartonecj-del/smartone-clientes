@@ -1458,6 +1458,9 @@ th{background:#f9fafb}
 small,.muted{color:#667085}
 .msg{padding:14px;background:#fff7ed;border-radius:8px}
 .success{background:#ecfdf3}
+.paginacao{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:18px;flex-wrap:wrap}
+.paginacao a{padding:9px 12px;border:1px solid #d0d5dd;border-radius:8px;text-decoration:none;margin-left:10px}
+input[type="date"]{min-width:150px}
 a{color:#175cd3}
 @media(max-width:760px){.scroll{overflow-x:auto}table{min-width:800px}}
 </style></head><body>
@@ -1465,7 +1468,7 @@ a{color:#175cd3}
 <main>
 <div class="card">
 <h2>Consultar e cadastrar aniversários</h2>
-<p class="muted">Busque pelo nome ou telefone. Os dados são salvos apenas no Smart One Clientes.</p>
+<p class="muted">Os clientes aparecem abaixo com a data de nascimento ao lado do nome. Cadastre ou edite e clique em Salvar. Os dados ficam apenas no Smart One Clientes.</p>
 {% if aviso %}<p class="msg">{{ aviso }}</p>{% endif %}
 {% if sucesso %}<p class="msg success">Aniversário salvo com sucesso.</p>{% endif %}
 <form method="get" action="/aniversarios" class="barra">
@@ -1479,24 +1482,36 @@ a{color:#175cd3}
 </form>
 </div>
 <div class="card">
-<h2>{% if busca %}Clientes encontrados{% else %}Aniversariantes do mês{% endif %}</h2>
-<p class="muted">Mostrando {{ exibidos }} de {{ total }} clientes. Para cadastrar uma data ausente, pesquise o cliente pelo nome ou telefone.</p>
+<h2>Clientes para cadastrar aniversários</h2>
+<p class="muted">Mostrando {{ exibindo_inicio }}–{{ exibindo_fim }} de {{ total }} clientes. Os clientes sem data cadastrada aparecem primeiro.</p>
 <div class="scroll"><table>
-<thead><tr><th>Cliente</th><th>Telefone</th><th>Aniversário</th><th>Cadastrar / editar</th><th>WhatsApp</th></tr></thead>
+<thead><tr><th>Cliente</th><th>Cadastrar / editar aniversário</th><th>Telefone</th><th>WhatsApp</th></tr></thead>
 <tbody>{% for cliente in clientes %}
-<tr><td><strong>{{ cliente.nome }}</strong></td><td>{{ cliente.celular }}</td>
-<td>{{ cliente.data_nascimento_formatada }}</td>
+<tr><td><strong>{{ cliente.nome }}</strong></td>
 <td><form method="post" action="/aniversarios/salvar" class="barra">
 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 <input type="hidden" name="cliente_id" value="{{ cliente.id }}">
 <input type="hidden" name="busca" value="{{ busca }}">
 <input type="hidden" name="mes" value="{{ mes }}">
+<input type="hidden" name="pagina" value="{{ pagina }}">
 <input type="date" name="data_nascimento" value="{{ cliente.data_nascimento_iso }}" required min="1900-01-01" max="{{ hoje }}" {% if not pode_salvar %}disabled{% endif %}>
 <button type="submit" {% if not pode_salvar %}disabled{% endif %}>Salvar</button>
 </form></td>
+<td>{{ cliente.celular }}</td>
 <td>{% if cliente.whatsapp %}<a href="https://wa.me/55{{ cliente.whatsapp }}" target="_blank" rel="noopener noreferrer">Enviar parabéns</a>{% else %}—{% endif %}</td>
-</tr>{% else %}<tr><td colspan="5">Nenhum cliente encontrado.</td></tr>{% endfor %}
+</tr>{% else %}<tr><td colspan="4">Nenhum cliente encontrado.</td></tr>{% endfor %}
 </tbody></table></div>
+<div class="paginacao">
+  <span>Página {{ pagina }} de {{ total_paginas }}</span>
+  <div>
+  {% if pagina > 1 %}
+    <a href="{{ url_for('tela_aniversarios', busca=busca, mes=mes, pagina=pagina-1) }}">← Anterior</a>
+  {% endif %}
+  {% if pagina < total_paginas %}
+    <a href="{{ url_for('tela_aniversarios', busca=busca, mes=mes, pagina=pagina+1) }}">Próxima →</a>
+  {% endif %}
+  </div>
+</div>
 </div>
 </main></body></html>
 """
@@ -1510,25 +1525,40 @@ def tela_aniversarios():
         clientes = clientes_com_aniversarios(clientes, locais)
         busca = request.args.get("busca", "").strip()[:100]
         try:
-            mes = int(request.args.get("mes", str(hoje_local().month)))
+            mes = int(request.args.get("mes", "0"))
         except ValueError:
-            mes = hoje_local().month
-        mes = mes if 0 <= mes <= 12 else hoje_local().month
-        if busca:
-            busca_comparavel = busca.casefold()
-            selecionados = [c for c in clientes if busca_comparavel in
-                            (str(c.get("nome") or "") + " " + str(c.get("celular") or "")).casefold()]
-        else:
-            selecionados = [c for c in clientes
-                            if converter_data(c.get("data_nascimento")) is not None and
-                            (mes == 0 or converter_data(c["data_nascimento"]).month == mes)]
-        selecionados.sort(key=lambda c: (
-            (converter_data(c.get("data_nascimento")).month if converter_data(c.get("data_nascimento")) else 13),
-            (converter_data(c.get("data_nascimento")).day if converter_data(c.get("data_nascimento")) else 32),
-            str(c.get("nome") or "").casefold()
+            mes = 0
+        mes = mes if 0 <= mes <= 12 else 0
+        busca_comparavel = busca.casefold()
+        selecionados = [
+            cliente for cliente in clientes
+            if (not busca_comparavel or busca_comparavel in (
+                str(cliente.get("nome") or "") + " " +
+                str(cliente.get("celular") or "")
+            ).casefold())
+            and (mes == 0 or (
+                converter_data(cliente.get("data_nascimento")) is not None
+                and converter_data(cliente["data_nascimento"]).month == mes
+            ))
+        ]
+        # Clientes sem data primeiro, depois ordem alfabética.
+        selecionados.sort(key=lambda cliente: (
+            converter_data(cliente.get("data_nascimento")) is not None,
+            str(cliente.get("nome") or "").casefold()
         ))
+        por_pagina = 60
+        total = len(selecionados)
+        total_paginas = max(1, (total + por_pagina - 1) // por_pagina)
+        try:
+            pagina = int(request.args.get("pagina", "1"))
+        except ValueError:
+            pagina = 1
+        pagina = max(1, min(pagina, total_paginas))
+        inicio = (pagina - 1) * por_pagina
+        exibindo_inicio = inicio + 1 if total else 0
+        exibindo_fim = min(total, inicio + por_pagina)
         exibidos = []
-        for cliente in selecionados[:80]:
+        for cliente in selecionados[inicio:inicio + por_pagina]:
             data = converter_data(cliente.get("data_nascimento"))
             telefone = re.sub(r"\D", "", str(cliente.get("celular") or ""))
             if telefone.startswith("55") and len(telefone) in (12, 13):
@@ -1539,8 +1569,9 @@ def tela_aniversarios():
                 "whatsapp": telefone if len(telefone) in (10, 11) else ""
             })
         return render_template_string(
-            ANIVERSARIOS_HTML, clientes=exibidos, total=len(selecionados),
-            exibidos=len(exibidos), busca=busca, mes=mes, csrf_token=token_aniversario(),
+            ANIVERSARIOS_HTML, clientes=exibidos, total=total, pagina=pagina,
+            total_paginas=total_paginas, exibindo_inicio=exibindo_inicio,
+            exibindo_fim=exibindo_fim, busca=busca, mes=mes, csrf_token=token_aniversario(),
             pode_salvar=banco_aniversarios_configurado() and aviso is None,
             aviso=aviso, sucesso=request.args.get("salvo") == "1",
             hoje=hoje_local().isoformat(),
@@ -1576,7 +1607,8 @@ def gravar_aniversario():
         return jsonify({"erro": "Falha ao salvar aniversário. Tente novamente."}), 503
     busca = (request.form.get("busca") or "").strip()[:100]
     mes = (request.form.get("mes") or "").strip()
-    return redirect(url_for("tela_aniversarios", busca=busca, mes=mes, salvo=1), code=303)
+    pagina = (request.form.get("pagina") or "1").strip()
+    return redirect(url_for("tela_aniversarios", busca=busca, mes=mes, pagina=pagina, salvo=1), code=303)
 
 
 @app.route("/health")

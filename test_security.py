@@ -170,6 +170,29 @@ class SegurancaTestes(unittest.TestCase):
             )
             self.assertEqual(r.status_code, 404)
 
+    def test_aniversarios_lista_clientes_sem_data_primeiro(self):
+        from unittest.mock import patch
+        registros = [
+            {"id": str(i), "nome": f"Cliente {i:03d}",
+             "celular": "38999999999",
+             "data_nascimento": "1995-10-11" if i % 2 else None}
+            for i in range(140)
+        ]
+        with patch.object(modulo, "carregar_clientes", return_value=registros), \
+             patch.object(modulo, "carregar_aniversarios_locais", return_value=({}, None)):
+            resposta = self.cliente.get("/aniversarios", headers=self.autorizacao())
+            self.assertEqual(resposta.status_code, 200)
+            pagina = resposta.get_data(as_text=True)
+            self.assertIn("Mostrando 1–60 de 140 clientes", pagina)
+            self.assertEqual(pagina.count('action="/aniversarios/salvar"'), 60)
+            self.assertIn("Cliente 000", pagina)
+            self.assertNotIn("Cliente 001", pagina)
+            self.assertIn("Próxima →", pagina)
+            segunda = self.cliente.get("/aniversarios?pagina=2", headers=self.autorizacao())
+            self.assertIn("Mostrando 61–120 de 140 clientes", segunda.get_data(as_text=True))
+            ultima = self.cliente.get("/aniversarios?pagina=3", headers=self.autorizacao())
+            self.assertEqual(ultima.get_data(as_text=True).count('action="/aniversarios/salvar"'), 20)
+
     def test_cabecalhos_restringem_cache(self):
         resposta = self.cliente.get("/health")
         self.assertIn("no-store", resposta.headers["Cache-Control"])
