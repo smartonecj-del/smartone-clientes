@@ -16,10 +16,12 @@ Oito testes novos em `test_agenda.py` aprovados: autenticação, proteção do f
 
 A suíte anterior em `main` já apresentava 19 falhas e 3 erros em 68 testes. A branch mantém os mesmos resultados anteriores, somando os oito testes novos aprovados (76 no total). Entre as expectativas antigas estão VIP por dois critérios e HEAD público. Não foram alteradas regras do painel para satisfazer expectativas desatualizadas.
 
-A instalação do navegador de teste não foi concluída no ambiente, então a validação visual está pendente. As rotas e templates foram exercitados pelo cliente de testes do Flask.
+Validação visual concluída em Chromium: cadastro, edição, status Pronto, link de WhatsApp e formulário móvel de 390 px, sem erros JavaScript ou transbordamento horizontal no formulário. Capturas revisadas em desktop e celular. As rotas também foram exercitadas pelo cliente de testes do Flask.
+
+As consultas SQL do módulo de armazenamento foram executadas em PGlite local (motor PostgreSQL), por adaptador de teste: criação da tabela, persistência entre consultas, reenvio sem duplicação, consulta por data, atrasos, edição, conflito de versão e rollback aprovados. Esse teste não substitui o teste de conexão psycopg com o Render.
 
 O PostgreSQL real do Render ainda precisa de validação: criar serviço, recarregar para conferir persistência, editar status e conferir consulta. O banco de produção não foi acessado no desenvolvimento. Os testes automatizados usam armazenamento simulado.
 
 ## Publicação
 
-Proposta para revisão, sem merge ou deploy. Antes da liberação, conferir a interface e validar gravação no PostgreSQL em ambiente de teste. Nenhuma credencial ou dado real de cliente é incluído nesta alteração.
+Interface e gravação local validadas. Após o deploy manual no Render, cadastrar um serviço de teste e recarregar a página para confirmar a conexão com o PostgreSQL da loja. Nenhuma credencial ou dado real de cliente é incluído nesta alteração.
