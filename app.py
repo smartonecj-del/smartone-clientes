@@ -434,9 +434,9 @@ def chave_consumidor(nome, telefone):
 
 def consumidor_da_venda(venda):
     # Formato observado na API: nome_cliente = "Nome completo - telefone".
-    # Nunca vincula somente pelo nome, ou somente por telefone compartilhado.
+    # A vinculação usa o telefone, mesmo que o nome varie entre vendas.
     texto = str(venda.get("nome_cliente") or "").strip()
-    partes = re.fullmatch(r"(.+?)\s+-\s+([+()0-9 .-]+)", texto)
+    partes = re.fullmatch(r"(.+?)\s*[-–—]\s*([+()0-9 .-]+)", texto)
     if not partes:
         return None
     nome, telefone = partes.group(1).strip(), telefone_normalizado(partes.group(2))
@@ -451,12 +451,36 @@ def gerar_base_clientes():
 
     vendas = listar_vendas()
 
-    indice_consumidores = defaultdict(set)
-    for cliente in clientes:
-        for telefone in (cliente.get("celular"), cliente.get("telefone")):
-            chave = chave_consumidor(cliente.get("nome"), telefone)
-            if chave and cliente.get("id") not in (None, ""):
-                indice_consumidores[chave].add(str(cliente["id"]))
+    # O mesmo contato representa a mesma pessoa, conforme regra da loja.
+    # IDs originais continuam como aliases para preservar aniversários salvos.
+    clientes_por_id = {str(c["id"]): c for c in clientes if c.get("id") not in (None, "")}
+    pais = {cid: cid for cid in clientes_por_id}
+
+    def raiz(cid):
+        while pais[cid] != cid:
+            pais[cid] = pais[pais[cid]]
+            cid = pais[cid]
+        return cid
+
+    indice_telefones = {}
+    for cid in sorted(clientes_por_id):
+        cliente = clientes_por_id[cid]
+        for valor in (cliente.get("celular"), cliente.get("telefone")):
+            telefone = telefone_normalizado(valor)
+            if not telefone:
+                continue
+            if telefone in indice_telefones:
+                r1, r2 = raiz(cid), raiz(indice_telefones[telefone])
+                pais[max(r1, r2)] = min(r1, r2)
+            else:
+                indice_telefones[telefone] = cid
+    indice_telefones = {tel: raiz(cid) for tel, cid in indice_telefones.items()}
+    consolidados = {}
+    for cid in sorted(clientes_por_id):
+        destino = raiz(cid)
+        if destino not in consolidados:
+            consolidados[destino] = {**clientes_por_id[destino], "ids_agrupados": []}
+        consolidados[destino]["ids_agrupados"].append(cid)
     consumidores_avulsos = {}
 
     historico = defaultdict(
@@ -486,25 +510,37 @@ def gerar_base_clientes():
         if venda_cancelada(venda):
             continue
 
-        cliente_id = str(
-            venda.get("cliente_id") or ""
-        )
+        data_venda = converter_data(venda.get("data"))
+        if data_venda is None:
+            raise RuntimeError("Venda com data ausente ou inválida no GestãoClick.")
+        if data_venda < date(2025, 9, 1):
+            continue
 
-        if cliente_id in ("", "0"):
-            consumidor = consumidor_da_venda(venda)
-            if consumidor is None:
-                continue
-            chave = chave_consumidor(consumidor["nome"], consumidor["celular"])
-            candidatos = indice_consumidores.get(chave, set())
-            if len(candidatos) == 1:
-                cliente_id = next(iter(candidatos))
-            else:
-                cliente_id = "consumidor-" + sha256(
-                    json.dumps(chave, ensure_ascii=False).encode("utf-8")
-                ).hexdigest()
+        cliente_id = str(venda.get("cliente_id") or "")
+        consumidor = consumidor_da_venda(venda)
+        if consumidor:
+            telefone = consumidor["celular"]
+            # Recupera também o ID usado pela versão anterior do painel.
+            chave_antiga = chave_consumidor(consumidor["nome"], telefone)
+            id_antigo = "consumidor-" + sha256(
+                json.dumps(chave_antiga, ensure_ascii=False).encode("utf-8")
+            ).hexdigest()
+            cliente_id = indice_telefones.get(telefone)
+            if cliente_id is None:
+                cliente_id = "contato-" + sha256(telefone.encode("utf-8")).hexdigest()
                 if cliente_id not in consumidores_avulsos:
-                    consumidor.update({"id": cliente_id, "origem": "Identificado na venda"})
-                    consumidores_avulsos[cliente_id] = consumidor
+                    consumidores_avulsos[cliente_id] = {
+                        **consumidor, "id": cliente_id,
+                        "origem": "Identificado na venda", "ids_agrupados": []
+                    }
+            grupo = consolidados.get(cliente_id, consumidores_avulsos.get(cliente_id))
+            if id_antigo not in grupo["ids_agrupados"]:
+                grupo["ids_agrupados"].append(id_antigo)
+        elif cliente_id in clientes_por_id:
+            cliente_id = raiz(cliente_id)
+        else:
+            # Sem contato nem cadastro reconhecido: não atribuir a outra pessoa.
+            continue
 
         registro = historico[cliente_id]
 
@@ -568,7 +604,7 @@ def gerar_base_clientes():
 
     resultado = []
 
-    for cliente in clientes + list(consumidores_avulsos.values()):
+    for cliente in list(consolidados.values()) + list(consumidores_avulsos.values()):
 
         cliente_id = str(cliente.get("id"))
 
@@ -623,6 +659,7 @@ def gerar_base_clientes():
         resultado.append({
 
             "id": cliente_id,
+            "ids_agrupados": cliente.get("ids_agrupados", [cliente_id]),
 
             "nome": (
                 cliente.get("nome")
@@ -902,6 +939,7 @@ Inteligência comercial conectada ao GestãoClick
 </nav>
 <section class="card" style="margin-bottom:20px" aria-label="Critérios dos clientes">
 <strong>Como os clientes são classificados</strong>
+<p>Compras desde 01/09/2025, conforme os registros retornados pelo GestãoClick. Cadastros com o mesmo telefone são agrupados.</p>
 <p>Ativo: menos de {{ dias_risco }} dias sem comprar · Em risco: de {{ dias_risco }} a {{ dias_inativo - 1 }} dias · Inativo: {{ dias_inativo }} dias ou mais.</p>
 <p>VIP: pelo menos {{ vip_valor }} em compras <strong>e</strong> {{ vip_compras }} compras no histórico disponível, sem prazo definido. Um VIP também pode estar em risco ou inativo.</p>
 <small>Os prazos contam desde a última compra. Clientes sem compra registrada ficam como “Sem compra”.</small>
@@ -1471,7 +1509,12 @@ def clientes_com_aniversarios(clientes, locais):
     resultado = []
     for original in clientes:
         cliente = original.copy()
-        nascimento = locais.get(str(cliente["id"]), cliente.get("data_nascimento"))
+        nascimento = locais.get(str(cliente["id"]))
+        if nascimento is None:
+            nascimento = next(
+                (locais[cid] for cid in cliente.get("ids_agrupados", []) if cid in locais),
+                cliente.get("data_nascimento")
+            )
         cliente["data_nascimento"] = nascimento
         cliente["data_nascimento_formatada"] = formatar_data(nascimento)
         cliente["aniversario_hoje"] = aniversario_hoje(nascimento)
