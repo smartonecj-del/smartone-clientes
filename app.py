@@ -932,6 +932,7 @@ Inteligência comercial conectada ao GestãoClick
 <a href="/">Painel de clientes</a>
 <a href="/whatsapp" {% if aba_whatsapp %}aria-current="page"{% endif %}>WhatsApp</a>
 <a href="/aniversarios">Aniversários</a>
+<a href="/agenda">Agenda de serviços</a>
 </nav>
 <section class="card" style="margin-bottom:20px" aria-label="Critérios dos clientes">
 <strong>Como os clientes são classificados</strong>
@@ -1546,7 +1547,7 @@ input[type="date"]{min-width:150px}
 a{color:#175cd3}
 @media(max-width:760px){.scroll{overflow-x:auto}table{min-width:800px}}
 </style></head><body>
-<header><h1>SMART ONE CLIENTES · ANIVERSÁRIOS</h1><a href="/">← Voltar ao painel</a></header>
+<header><h1>SMART ONE CLIENTES · ANIVERSÁRIOS</h1><a href="/">← Voltar ao painel</a> · <a href="/agenda">Agenda de serviços</a></header>
 <main>
 <div class="card">
 <h2>Consultar e cadastrar aniversários</h2>
@@ -1691,6 +1692,10 @@ def gravar_aniversario():
     mes = (request.form.get("mes") or "").strip()
     pagina = (request.form.get("pagina") or "1").strip()
     return redirect(url_for("tela_aniversarios", busca=busca, mes=mes, pagina=pagina, salvo=1), code=303)
+
+
+from agenda import registrar_agenda
+registrar_agenda(app, carregar_clientes)
 
 
 @app.route("/health")
