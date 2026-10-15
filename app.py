@@ -895,6 +895,26 @@ Inteligência comercial conectada ao GestãoClick
 </header>
 
 <div class="container">
+<nav class="toolbar" aria-label="Abas">
+<a href="/">Painel de clientes</a>
+<a href="/whatsapp" {% if aba_whatsapp %}aria-current="page"{% endif %}>WhatsApp</a>
+<a href="/aniversarios">Aniversários</a>
+</nav>
+<section class="card" style="margin-bottom:20px" aria-label="Critérios dos clientes">
+<strong>Como os clientes são classificados</strong>
+<p>Ativo: menos de {{ dias_risco }} dias sem comprar · Em risco: de {{ dias_risco }} a {{ dias_inativo - 1 }} dias · Inativo: {{ dias_inativo }} dias ou mais.</p>
+<p>VIP: pelo menos {{ vip_valor }} em compras <strong>e</strong> {{ vip_compras }} compras no histórico disponível, sem prazo definido. Um VIP também pode estar em risco ou inativo.</p>
+<small>Os prazos contam desde a última compra. Clientes sem compra registrada ficam como “Sem compra”.</small>
+</section>
+{% if aba_whatsapp %}
+<section class="card" style="margin-bottom:20px">
+<h2 style="margin-top:0">Enviar mensagem pelo WhatsApp</h2>
+<p>Busque um cliente ou filtre por situação. Escreva a mensagem e clique em “Abrir WhatsApp” ao lado do nome.</p>
+<label for="mensagemWhatsApp">Mensagem (opcional)</label>
+<textarea id="mensagemWhatsApp" rows="4" maxlength="2000" style="display:block;width:100%;padding:12px;margin:12px 0;font:inherit;border:1px solid #d0d5dd;border-radius:8px" placeholder="Olá! Aqui é da Smart One. Como podemos ajudar?"></textarea>
+<small>Você confere e envia a mensagem no WhatsApp. O painel não confirma se o número tem WhatsApp ou se houve envio.</small>
+</section>
+{% endif %}
 
 <div class="grid">
 
@@ -1130,7 +1150,12 @@ VIP
 
 
 <td>
-{{ cliente.celular }}
+{{ cliente.celular or 'Sem telefone' }}
+{% if cliente.whatsapp %}
+<br><a class="abrir-whatsapp" href="https://wa.me/55{{ cliente.whatsapp }}" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:8px;color:#087443;font-weight:bold">Abrir WhatsApp</a>
+{% else %}
+<br><small>Telefone ausente ou inválido</small>
+{% endif %}
 </td>
 
 
@@ -1173,11 +1198,11 @@ VIP
   <span>Mostrando {{ exibindo_inicio }}–{{ exibindo_fim }} de {{ quantidade_filtrada }} clientes</span>
   <div class="paginacao-acoes">
     {% if pagina_atual > 1 %}
-    <a href="{{ url_for('dashboard', pagina=pagina_atual-1, status=status_atual, busca=busca_atual) }}#secaoClientes">← Anterior</a>
+    <a href="{{ caminho_lista }}?{{ dict(pagina=pagina_atual-1, status=status_atual, busca=busca_atual)|urlencode }}#secaoClientes">← Anterior</a>
     {% endif %}
     <span>Página {{ pagina_atual }} de {{ total_paginas }}</span>
     {% if pagina_atual < total_paginas %}
-    <a href="{{ url_for('dashboard', pagina=pagina_atual+1, status=status_atual, busca=busca_atual) }}#secaoClientes">Próxima →</a>
+    <a href="{{ caminho_lista }}?{{ dict(pagina=pagina_atual+1, status=status_atual, busca=busca_atual)|urlencode }}#secaoClientes">Próxima →</a>
     {% endif %}
   </div>
 </div>
@@ -1186,13 +1211,21 @@ VIP
 
 <script>
 
+document.querySelectorAll(".abrir-whatsapp").forEach(link => {
+    const destino = link.href;
+    link.addEventListener("click", () => {
+        const campo = document.getElementById("mensagemWhatsApp");
+        const mensagem = campo ? campo.value.trim() : "";
+        link.href = destino + (mensagem ? "?text=" + encodeURIComponent(mensagem) : "");
+    });
+});
 let esperaBusca;
 function irParaLista(status, busca, pagina) {
     const parametros = new URLSearchParams();
     if (status) parametros.set("status", status);
     if (busca) parametros.set("busca", busca);
     if (pagina > 1) parametros.set("pagina", String(pagina));
-    window.location.assign("/" + (parametros.toString() ? "?" + parametros.toString() : "") + "#secaoClientes");
+    window.location.assign(window.location.pathname + (parametros.toString() ? "?" + parametros.toString() : "") + "#secaoClientes");
 }
 function abrirClientes(status) { irParaLista(status, "", 1); }
 function aplicarFiltros() {
@@ -1248,6 +1281,7 @@ def pagina_carregamento(erro=False):
 
 
 @app.route("/")
+@app.route("/whatsapp")
 def dashboard():
     # HEAD é usado para verificar disponibilidade; não deve consultar o ERP.
     if request.method == "HEAD":
@@ -1347,6 +1381,10 @@ def dashboard():
         pagina_atual = max(1, min(pagina_atual, total_paginas))
         indice_inicio = (pagina_atual - 1) * por_pagina
         clientes = clientes_filtrados[indice_inicio:indice_inicio + por_pagina]
+        clientes = [
+            {**cliente, "whatsapp": telefone_normalizado(cliente.get("celular"))}
+            for cliente in clientes
+        ]
         exibindo_inicio = indice_inicio + 1 if quantidade_filtrada else 0
         exibindo_fim = indice_inicio + len(clientes)
 
@@ -1355,6 +1393,12 @@ def dashboard():
             HTML,
 
             sincronizacao=cache_clientes.estado(),
+            aba_whatsapp=request.path == "/whatsapp",
+            caminho_lista=request.path,
+            dias_risco=DIAS_EM_RISCO,
+            dias_inativo=DIAS_INATIVO,
+            vip_valor=moeda(VIP_VALOR_MINIMO),
+            vip_compras=VIP_COMPRAS_MINIMAS,
 
             clientes=clientes,
             status_atual=status_atual,
