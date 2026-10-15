@@ -71,7 +71,6 @@ DIAS_INATIVO = 180
 # VIP provisório.
 # Depois vamos calibrar com os números reais da Smart One.
 VIP_VALOR_MINIMO = 1000
-VIP_COMPRAS_MINIMAS = 5
 
 
 # =========================================================
@@ -326,10 +325,7 @@ def definir_status(ultima_compra):
 
 def calcular_vip(total_gasto, quantidade_compras):
 
-    return (
-        total_gasto >= VIP_VALOR_MINIMO
-        and quantidade_compras >= VIP_COMPRAS_MINIMAS
-    )
+    return total_gasto > VIP_VALOR_MINIMO
 
 
 def aniversario_hoje(data_nascimento):
@@ -941,7 +937,7 @@ Inteligência comercial conectada ao GestãoClick
 <strong>Como os clientes são classificados</strong>
 <p>Compras desde 01/09/2025, conforme os registros retornados pelo GestãoClick. Cadastros com o mesmo telefone são agrupados.</p>
 <p>Ativo: menos de {{ dias_risco }} dias sem comprar · Em risco: de {{ dias_risco }} a {{ dias_inativo - 1 }} dias · Inativo: {{ dias_inativo }} dias ou mais.</p>
-<p>VIP: pelo menos {{ vip_valor }} em compras <strong>e</strong> {{ vip_compras }} compras no histórico disponível, sem prazo definido. Um VIP também pode estar em risco ou inativo.</p>
+<p>VIP: total gasto acima de {{ vip_valor }} no histórico disponível, sem quantidade mínima de compras. Um VIP também pode estar em risco ou inativo.</p>
 <small>Os prazos contam desde a última compra. Clientes sem compra registrada ficam como “Sem compra”.</small>
 </section>
 {% if aba_whatsapp %}
@@ -1436,7 +1432,6 @@ def dashboard():
             dias_risco=DIAS_EM_RISCO,
             dias_inativo=DIAS_INATIVO,
             vip_valor=moeda(VIP_VALOR_MINIMO),
-            vip_compras=VIP_COMPRAS_MINIMAS,
 
             clientes=clientes,
             status_atual=status_atual,
