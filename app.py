@@ -8,7 +8,7 @@ from hashlib import sha256
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from collections import defaultdict
 
 import requests
@@ -483,6 +483,7 @@ def gerar_base_clientes():
         lambda: {
             "compras": 0,
             "total": Decimal("0"),
+            "primeira_compra": None,
             "ultima_compra": None,
             "produtos": [],
             "servicos": [],
@@ -543,9 +544,8 @@ def gerar_base_clientes():
         registro["compras"] += 1
 
         registro["total"] += total_da_venda(venda)
-        data_venda = converter_data(venda.get("data"))
-        if data_venda is None:
-            raise RuntimeError("Venda com data ausente ou inválida no GestãoClick.")
+        if registro["primeira_compra"] is None or data_venda < registro["primeira_compra"]:
+            registro["primeira_compra"] = data_venda
         if (
             registro["ultima_compra"] is None
             or data_venda > registro["ultima_compra"]
@@ -679,6 +679,9 @@ def gerar_base_clientes():
                 formatar_data(nascimento),
 
             "cidade": cidade or "",
+
+            "primeira_compra": h["primeira_compra"].isoformat() if h["primeira_compra"] else None,
+            "primeira_compra_formatada": formatar_data(h["primeira_compra"]),
 
             "ultima_compra":
                 h["ultima_compra"].isoformat() if h["ultima_compra"] else None,
@@ -931,9 +934,22 @@ Inteligência comercial conectada ao GestãoClick
 <nav class="toolbar" aria-label="Abas">
 <a href="/">Painel de clientes</a>
 <a href="/whatsapp" {% if aba_whatsapp %}aria-current="page"{% endif %}>WhatsApp</a>
+<a href="/clientes-novos" {% if aba_novos %}aria-current="page"{% endif %}>Clientes novos</a>
 <a href="/aniversarios">Aniversários</a>
 <a href="/agenda">Agenda de serviços</a>
 </nav>
+{% if aba_novos %}
+<section class="card">
+<h2>Clientes novos</h2>
+<p>Primeira compra registrada no histórico desde 01/09/2025.</p>
+<nav class="toolbar" aria-label="Período da primeira compra">
+{% for dias, rotulo in periodos.items() %}
+<a href="{{ caminho_lista }}?{{ dict(dias=dias, busca=busca_atual, status=status_atual)|urlencode }}" {% if dias == periodo %}aria-current="true" style="font-weight:bold;text-decoration:underline"{% endif %}>{{ rotulo }}</a>
+{% endfor %}
+</nav>
+<p>{{ inicio_formatado }} a {{ fim_formatado }} · Inclui hoje</p>
+</section>
+{% else %}
 <section class="card" style="margin-bottom:20px" aria-label="Critérios dos clientes">
 <strong>Como os clientes são classificados</strong>
 <p>Compras desde 01/09/2025, conforme os registros retornados pelo GestãoClick. Cadastros com o mesmo telefone são agrupados.</p>
@@ -1069,8 +1085,9 @@ Aniversários próximos 7 dias
 
 
 <p><a href="/aniversarios" style="display:inline-block;padding:12px 16px;background:#175cd3;color:white;text-decoration:none;border-radius:8px;margin-top:18px">🎂 Abrir aba Aniversários</a></p>
+{% endif %}
 <h2 id="secaoClientes">
-Clientes
+{% if aba_novos %}{{ quantidade_filtrada }} {{ "cliente novo" if quantidade_filtrada == 1 else "clientes novos" }}{% else %}Clientes{% endif %}
 </h2>
 
 
@@ -1129,7 +1146,7 @@ WhatsApp
 </th>
 
 <th>
-Última compra
+{{ "Primeira compra" if aba_novos else "Última compra" }}
 </th>
 
 <th>
@@ -1195,7 +1212,7 @@ VIP
 
 
 <td>
-{{ cliente.ultima_compra_formatada }}
+{{ cliente.primeira_compra_formatada if aba_novos else cliente.ultima_compra_formatada }}
 </td>
 
 
@@ -1224,6 +1241,8 @@ VIP
 
 </tr>
 
+{% else %}
+<tr><td colspan="7">Nenhum cliente encontrado com os filtros selecionados.</td></tr>
 {% endfor %}
 
 </tbody>
@@ -1233,11 +1252,11 @@ VIP
   <span>Mostrando {{ exibindo_inicio }}–{{ exibindo_fim }} de {{ quantidade_filtrada }} clientes</span>
   <div class="paginacao-acoes">
     {% if pagina_atual > 1 %}
-    <a href="{{ caminho_lista }}?{{ dict(pagina=pagina_atual-1, status=status_atual, busca=busca_atual)|urlencode }}#secaoClientes">← Anterior</a>
+    <a href="{{ caminho_lista }}?{{ dict(pagina=pagina_atual-1, status=status_atual, busca=busca_atual, **parametros_periodo)|urlencode }}#secaoClientes">← Anterior</a>
     {% endif %}
     <span>Página {{ pagina_atual }} de {{ total_paginas }}</span>
     {% if pagina_atual < total_paginas %}
-    <a href="{{ caminho_lista }}?{{ dict(pagina=pagina_atual+1, status=status_atual, busca=busca_atual)|urlencode }}#secaoClientes">Próxima →</a>
+    <a href="{{ caminho_lista }}?{{ dict(pagina=pagina_atual+1, status=status_atual, busca=busca_atual, **parametros_periodo)|urlencode }}#secaoClientes">Próxima →</a>
     {% endif %}
   </div>
 </div>
@@ -1257,6 +1276,7 @@ document.querySelectorAll(".abrir-whatsapp").forEach(link => {
 let esperaBusca;
 function irParaLista(status, busca, pagina) {
     const parametros = new URLSearchParams();
+    {% if aba_novos %}parametros.set("dias", "{{ periodo }}");{% endif %}
     if (status) parametros.set("status", status);
     if (busca) parametros.set("busca", busca);
     if (pagina > 1) parametros.set("pagina", String(pagina));
@@ -1315,6 +1335,7 @@ def pagina_carregamento(erro=False):
     titulo=titulo, mensagem=mensagem, intervalo=30 if erro else 5), 500 if erro else 202
 
 
+@app.route("/clientes-novos")
 @app.route("/")
 @app.route("/whatsapp")
 def dashboard():
@@ -1401,9 +1422,20 @@ def dashboard():
                 return busca_normalizada in conteudo.casefold()
             return True
 
+        aba_novos = request.path == "/clientes-novos"
+        periodos = {7: "1 semana", 15: "15 dias", 30: "30 dias"}
+        periodo = request.args.get("dias", default=7, type=int)
+        if periodo not in periodos:
+            periodo = 7
+        hoje = hoje_local()
+        inicio = hoje - timedelta(days=periodo - 1)
+        if aba_novos:
+            inicio_iso, fim_iso = inicio.isoformat(), hoje.isoformat()
+            clientes = [c for c in clientes if inicio_iso <= (c.get("primeira_compra") or "") <= fim_iso]
+
         clientes_filtrados = sorted(
             (cliente for cliente in clientes if corresponde(cliente)),
-            key=lambda c: (c["vip"], c["total_gasto"]),
+            key=lambda c: c["primeira_compra"] if aba_novos else (c["vip"], c["total_gasto"]),
             reverse=True
         )
         por_pagina = 80
@@ -1428,6 +1460,12 @@ def dashboard():
             HTML,
 
             sincronizacao=cache_clientes.estado(),
+            aba_novos=aba_novos,
+            periodos=periodos,
+            periodo=periodo,
+            parametros_periodo={"dias": periodo} if aba_novos else {},
+            inicio_formatado=formatar_data(inicio),
+            fim_formatado=formatar_data(hoje),
             aba_whatsapp=request.path == "/whatsapp",
             caminho_lista=request.path,
             dias_risco=DIAS_EM_RISCO,
@@ -1547,7 +1585,7 @@ input[type="date"]{min-width:150px}
 a{color:#175cd3}
 @media(max-width:760px){.scroll{overflow-x:auto}table{min-width:800px}}
 </style></head><body>
-<header><h1>SMART ONE CLIENTES · ANIVERSÁRIOS</h1><a href="/">← Voltar ao painel</a> · <a href="/agenda">Agenda de serviços</a></header>
+<header><h1>SMART ONE CLIENTES · ANIVERSÁRIOS</h1><a href="/">← Voltar ao painel</a> · <a href="/clientes-novos">Clientes novos</a> · <a href="/agenda">Agenda de serviços</a></header>
 <main>
 <div class="card">
 <h2>Consultar e cadastrar aniversários</h2>
