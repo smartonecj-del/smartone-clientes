@@ -1,0 +1,56 @@
+{% extends "agenda_base.html" %}
+{% block titulo %}Parceiros{% endblock %}
+{% block subtitulo %}Programa de indicação{% endblock %}
+{% block rodape %}{% endblock %}
+{% macro formulario(acao) %}
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="acao" value="{{ acao }}">
+{% endmacro %}
+{% macro valores() %}
+<label>Serviços (R$) · 5%<input name="servicos" inputmode="decimal" placeholder="0,00"></label>
+<label>Produtos (R$) · 3%<input name="produtos" inputmode="decimal" placeholder="0,00"></label>
+{% endmacro %}
+{% block conteudo %}
+{% if erro %}<p class="aviso erro" role="alert">{{ erro }}</p>{% endif %}
+<section class="card">
+<div class="topo"><h2>Parceiros</h2><details><summary>Cadastrar parceiro</summary>
+<form method="post" class="grade">{{ formulario('parceiro') }}
+<label>Nome do parceiro<input name="nome" maxlength="120" required></label>
+<label>Contato (opcional)<input name="contato" maxlength="80"></label>
+<button>Cadastrar parceiro</button></form></details></div>
+{% if parceiros %}<div class="scroll"><table style="min-width:580px">
+<thead><tr><th>Parceiro</th><th>Indicações</th><th>Vendas fechadas</th><th>Valor vendido</th><th>Comissão apurada</th></tr></thead><tbody>
+{% for p in parceiros %}<tr><td><a href="{{ url_for('parceiros', parceiro=p.id) }}#detalhes">{{ p.nome }}</a><small>{{ p.contato }}</small></td>
+<td>{{ p.indicacoes }}</td><td>{{ p.vendas }}</td><td>{{ moeda(p.total) }}</td><td>{{ moeda(p.comissao) }}{% if p.pendentes %}<small>Vendas a classificar: {{ p.pendentes }}</small>{% endif %}</td></tr>{% endfor %}
+</tbody></table></div>{% elif not erro %}<p>Cadastre o primeiro parceiro para registrar indicações.</p>{% endif %}
+</section>
+{% if selecionado %}
+<section class="card" id="detalhes"><h2>{{ selecionado.nome }}</h2>
+<form method="get" action="{{ url_for('relatorio_parceiro', parceiro=selecionado.id) }}" class="barra">
+<label>Mês do relatório (em branco para todo o período)<input type="month" name="mes"></label>
+<button>Baixar relatório de comissão em PDF</button></form>
+<h3>Nova indicação</h3>
+<form method="post" class="grade">{{ formulario('indicacao') }}
+<input type="hidden" name="parceiro" value="{{ selecionado.id }}"><input type="hidden" name="id" value="{{ novo_id }}">
+<label>Cliente indicado<input name="cliente" maxlength="120" required></label>
+<label>Contato do cliente (opcional)<input name="contato" maxlength="80"></label>
+<button>Salvar indicação</button></form></section>
+<section class="card"><h2>Indicações de {{ selecionado.nome }}</h2>
+{% for i in indicacoes %}<article>
+<h3>{{ i.cliente }}</h3>{% if i.contato %}<p>{{ i.contato }}</p>{% endif %}
+{% for v in vendas.get(i.id, []) %}<p>Venda {{ v.referencia }} · {{ v.data.strftime('%d/%m/%Y') }} · <strong>{{ moeda(v.valor) }}</strong></p>
+{% if v.comissao is not none %}<p>Comissão: <strong>{{ moeda(v.comissao) }}</strong> · Serviços: {{ moeda(v.servicos) }} · Produtos: {{ moeda(v.valor - v.servicos) }}</p>
+{% else %}<details><summary>Classificar venda para calcular a comissão</summary>
+<form method="post" class="grade">{{ formulario('classificar') }}
+<input type="hidden" name="referencia" value="{{ v.referencia }}"><input type="hidden" name="indicacao" value="{{ i.id }}">
+{{ valores() }}<button>Salvar classificação</button></form></details>{% endif %}
+{% else %}<p class="muted">Aguardando a primeira venda.</p>{% endfor %}
+<details><summary>Registrar venda fechada</summary>
+<form method="post" class="grade">{{ formulario('venda') }}<input type="hidden" name="indicacao" value="{{ i.id }}">
+<label>Número da venda no GestãoClick<input name="referencia" maxlength="80" required></label>
+<label>Data da venda<input type="date" name="data" required max="{{ hoje }}" value="{{ hoje }}"></label>
+{{ valores() }}
+<button>Salvar venda</button></form></details><hr></article>
+{% else %}<p>Nenhuma indicação cadastrada para este parceiro.</p>{% endfor %}
+</section>{% endif %}
+{% endblock %}
