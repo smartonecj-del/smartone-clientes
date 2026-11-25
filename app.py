@@ -936,7 +936,7 @@ Inteligência comercial conectada ao GestãoClick
 <a href="/whatsapp" {% if aba_whatsapp %}aria-current="page"{% endif %}>WhatsApp</a>
 <a href="/clientes-novos" {% if aba_novos %}aria-current="page"{% endif %}>Clientes novos</a>
 <a href="/aniversarios">Aniversários</a>
-<a href="/agenda">Agenda de serviços</a>
+<a href="/agenda">Agenda de serviços</a> <a href="/parceiros">Parceiros</a>
 </nav>
 {% if aba_novos %}
 <section class="card">
@@ -1585,7 +1585,7 @@ input[type="date"]{min-width:150px}
 a{color:#175cd3}
 @media(max-width:760px){.scroll{overflow-x:auto}table{min-width:800px}}
 </style></head><body>
-<header><h1>SMART ONE CLIENTES · ANIVERSÁRIOS</h1><a href="/">← Voltar ao painel</a> · <a href="/clientes-novos">Clientes novos</a> · <a href="/agenda">Agenda de serviços</a></header>
+<header><h1>SMART ONE CLIENTES · ANIVERSÁRIOS</h1><a href="/">← Voltar ao painel</a> · <a href="/clientes-novos">Clientes novos</a> · <a href="/agenda">Agenda de serviços</a> <a href="/parceiros">Parceiros</a></header>
 <main>
 <div class="card">
 <h2>Consultar e cadastrar aniversários</h2>
@@ -1734,6 +1734,9 @@ def gravar_aniversario():
 
 from agenda import registrar_agenda
 registrar_agenda(app, carregar_clientes)
+
+from parceiros import registrar_parceiros
+registrar_parceiros(app, token_aniversario, validar_token_aniversario, moeda)
 
 
 @app.route("/health")
