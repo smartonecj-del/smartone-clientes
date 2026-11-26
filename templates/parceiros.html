@@ -1,0 +1,29 @@
+{% extends "agenda_base.html" %}
+{% block titulo %}Parceiros{% endblock %}
+{% block subtitulo %}Programa de indicação{% endblock %}
+{% block rodape %}Smart One · Programa de indicação{% endblock %}
+{% block conteudo %}
+{% if erro %}
+<section class="card"><p role="alert" class="aviso erro">{{ erro }}</p><a href="/parceiros">Voltar para Parceiros</a></section>
+{% else %}
+<section class="card"><h2>Parceiros</h2>
+<details {% if not lista %}open{% endif %}><summary>Cadastrar parceiro</summary>
+<form method="post" class="barra"><input type="hidden" name="csrf_token" value="{{ token }}"><input type="hidden" name="acao" value="cadastrar">
+<label>Nome<input name="nome" maxlength="100" required></label><label>Contato (opcional)<input name="contato" maxlength="80"></label><button>Cadastrar</button></form></details>
+</section>
+{% if atual %}
+<section class="card">
+<form class="barra"><label>Parceiro<select name="parceiro">{% for p in lista %}<option value="{{ p.id }}" {% if p.id==atual.id %}selected{% endif %}>{{ p.nome }}{% if p.contato %} · {{ p.contato }}{% endif %}</option>{% endfor %}</select></label>
+<label>Mês<input type="month" name="mes" value="{{ mes }}" required></label><button>Consultar</button></form>
+<h2 style="margin-top:24px">{{ atual.nome }}</h2>
+<div class="indicadores"><div class="indicador"><strong>{{ vendas|length }}</strong> vendas</div><div class="indicador">Total vendido <strong>{{ reais(total) }}</strong></div><div class="indicador">Comissão <strong>{{ reais(comissao) }}</strong></div></div>
+</section>
+<section class="card"><h2>Registrar venda indicada</h2><p>Informe os valores finais da venda. Serviços geram 5% de comissão e produtos geram 3%.</p>
+<form method="post" class="grade"><input type="hidden" name="csrf_token" value="{{ token }}"><input type="hidden" name="acao" value="venda"><input type="hidden" name="parceiro" value="{{ atual.id }}">
+<label>Número da venda ou O.S.<input name="referencia" required maxlength="64"></label><label>Data da venda<input type="date" name="dia" value="{{ hoje }}" max="{{ hoje }}" required></label>
+<label>Serviços (R$)<input name="servicos" inputmode="decimal" placeholder="0,00"></label><label>Produtos (R$)<input name="produtos" inputmode="decimal" placeholder="0,00"></label><button>Registrar venda</button></form></section>
+<section class="card"><div class="topo"><h2>Vendas do mês</h2><a class="botao" href="{{ url_for('parceiros', parceiro=atual.id, mes=mes, formato='pdf') }}">Baixar relatório em PDF</a></div>
+{% if vendas %}<div class="scroll"><table><thead><tr><th>Data</th><th>Venda</th><th>Serviços</th><th>Produtos</th><th>Total vendido</th><th>Comissão</th></tr></thead><tbody>
+{% for v in vendas %}<tr><td>{{ v.dia.strftime('%d/%m/%Y') }}</td><td>{{ v.referencia }}</td>{% for k in ('servicos','produtos','total','comissao') %}<td>{{ reais(v[k]) }}</td>{% endfor %}</tr>{% endfor %}
+</tbody></table></div>{% else %}<p>Nenhuma venda registrada para este parceiro no mês selecionado.</p>{% endif %}</section>
+{% endif %}{% endif %}{% endblock %}
