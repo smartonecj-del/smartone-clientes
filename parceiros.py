@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from io import BytesIO
+import os
 import re
 from zoneinfo import ZoneInfo
 
@@ -12,7 +13,14 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from xml.sax.saxutils import escape
-from aniversarios_store import conexao
+from aniversarios_store import conexao as conexao_padrao
+
+
+def conexao():
+    url = os.getenv("PARCEIROS_DATABASE_URL", "").strip()
+    if url:
+        return psycopg.connect(url, connect_timeout=8)
+    return conexao_padrao()
 
 
 def preparar(conn):

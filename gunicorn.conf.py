@@ -6,8 +6,7 @@ timeout = 120
 
 
 def post_worker_init(worker):
-    from aniversarios_store import conexao
-    from parceiros import preparar
+    from parceiros import conexao, preparar
     import psycopg
 
     try:
