@@ -817,6 +817,7 @@ header p {
 .paginacao a { color: #175cd3; text-decoration: none; padding: 8px 10px; border: 1px solid #d0d5dd; border-radius: 8px; background: white; }
 .paginacao a:hover { background: #eff4ff; }
 .filtro-card { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+a.filtro-card { box-sizing: border-box; text-decoration: none; }
 .filtro-card:hover { border-color: #2563eb; background: #f1f6ff; }
 .filtro-card:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
 
@@ -889,6 +890,10 @@ th {
 
 .alerta {
     background: #fff7ed;
+}
+
+@media(min-width:801px) {
+    .resumo-clientes { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
 
 @media(max-width:800px) {
@@ -967,7 +972,7 @@ Inteligência comercial conectada ao GestãoClick
 </section>
 {% endif %}
 
-<div class="grid">
+<div class="grid resumo-clientes">
 
 <button type="button" class="card filtro-card" onclick="abrirClientes('')">
 
@@ -1007,6 +1012,11 @@ VIPs
 
 </button>
 
+
+<a class="card filtro-card" href="/clientes-novos?dias=7">
+<small>Clientes novos · 7 dias</small>
+<div class="numero">{{ novos_semana }}</div>
+</a>
 
 <div class="card aniversario">
 
@@ -1429,9 +1439,15 @@ def dashboard():
             periodo = 7
         hoje = hoje_local()
         inicio = hoje - timedelta(days=periodo - 1)
-        if aba_novos:
+        def novos_no_periodo(inicio):
             inicio_iso, fim_iso = inicio.isoformat(), hoje.isoformat()
-            clientes = [c for c in clientes if inicio_iso <= (c.get("primeira_compra") or "") <= fim_iso]
+            return [c for c in clientes if inicio_iso <= (c.get("primeira_compra") or "") <= fim_iso]
+
+        novos_semana = None
+        if aba_novos:
+            clientes = novos_no_periodo(inicio)
+        else:
+            novos_semana = len(novos_no_periodo(hoje - timedelta(days=6)))
 
         clientes_filtrados = sorted(
             (cliente for cliente in clientes if corresponde(cliente)),
@@ -1461,6 +1477,7 @@ def dashboard():
 
             sincronizacao=cache_clientes.estado(),
             aba_novos=aba_novos,
+            novos_semana=novos_semana,
             periodos=periodos,
             periodo=periodo,
             parametros_periodo={"dias": periodo} if aba_novos else {},
